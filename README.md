@@ -9,6 +9,7 @@ Copy `.env.example` to `.env` in the deployment environment and set real values.
 - `APP_URL=https://cms.shyfted.com.au`
 - `DATABASE_URL=sqlite:///data/cms.db`
 - `AUTH_SESSION_SECRET` set to a long random value
+- `CMS_ADMIN_EMAIL` and `CMS_ADMIN_PASSWORD` for first-admin bootstrap
 - SMTP settings for password reset email delivery
 
 Do not commit `.env`, the SQLite database, uploaded media, or generated runtime state.
@@ -21,11 +22,12 @@ python3 -m venv .venv
 pip install -r requirements.txt
 export AUTH_SESSION_SECRET="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
 export SESSION_COOKIE_SECURE=false
-flask --app app create-admin
+export CMS_ADMIN_EMAIL=admin@example.com
+export CMS_ADMIN_PASSWORD='replace-with-a-long-temporary-password'
 flask --app app run --host 0.0.0.0 --port 5050
 ```
 
-The app creates database tables automatically on startup. There is no public registration; create the first admin with `flask --app app create-admin`, then admins can create staff or admin users from `/users`.
+The app creates database tables automatically on startup. If no CMS users exist yet and `CMS_ADMIN_EMAIL` and `CMS_ADMIN_PASSWORD` are set, the app creates the first admin account from those environment variables. If users already exist, those variables are ignored. There is no public registration; after bootstrap, admins can create staff or admin users from `/users`.
 
 ## Production Run
 

@@ -173,10 +173,6 @@ def init_db():
     db.commit()
 
 
-with app.app_context():
-    init_db()
-
-
 @app.cli.command("create-admin")
 @click.option("--email", prompt=True)
 @click.option("--name", prompt=True)
@@ -222,9 +218,13 @@ def current_user():
     return user
 
 
+def hash_password(password):
+    return generate_password_hash(password, method="pbkdf2:sha256:600000", salt_length=16)
+
+
 def create_user(email, name, role, password):
     now = utc_timestamp()
-    password_hash = generate_password_hash(password, method="pbkdf2:sha256:600000", salt_length=16)
+    password_hash = hash_password(password)
     db = get_db()
     cursor = db.execute(
         """
@@ -235,6 +235,31 @@ def create_user(email, name, role, password):
     )
     db.commit()
     return cursor.lastrowid
+
+
+def bootstrap_first_admin():
+    db = get_db()
+    user_count = db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+    if user_count:
+        return
+
+    email = (os.environ.get("CMS_ADMIN_EMAIL") or "").strip()
+    password = os.environ.get("CMS_ADMIN_PASSWORD") or ""
+    if not email and not password:
+        return
+    if not email or not password:
+        raise RuntimeError("Set both CMS_ADMIN_EMAIL and CMS_ADMIN_PASSWORD to bootstrap the first admin.")
+    if "@" not in email:
+        raise RuntimeError("CMS_ADMIN_EMAIL must be a valid email address.")
+    if len(password) < 10:
+        raise RuntimeError("CMS_ADMIN_PASSWORD must be at least 10 characters.")
+
+    create_user(email, "Admin", "admin", password)
+
+
+with app.app_context():
+    init_db()
+    bootstrap_first_admin()
 
 
 def token_hash(token):
@@ -754,7 +779,7 @@ def reset_password(token):
             error = "Passwords do not match."
         else:
             now = utc_timestamp()
-            password_hash = generate_password_hash(password, method="pbkdf2:sha256:600000", salt_length=16)
+            password_hash = hash_password(password)
             db = get_db()
             db.execute(
                 "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
