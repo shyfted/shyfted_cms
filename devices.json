@@ -1,0 +1,28 @@
+{
+    "device_001": {
+        "id": "device_001",
+        "name": "The frankenstein",
+        "hostname": "shyfted",
+        "last_seen": "2026-05-05T11:41:25.206681Z",
+        "status": "online",
+        "ip": "192.168.0.83",
+        "screens": {
+            "lcd": {
+                "type": "lcd",
+                "width": 800,
+                "height": 480,
+                "color": true,
+                "rotation": 0
+            },
+            "eink": {
+                "type": "eink",
+                "width": 800,
+                "height": 480,
+                "color": false,
+                "rotation": 0,
+                "driver": "waveshare_epd.epd7in5_V2"
+            }
+        },
+        "client_version": "frankenstein-2"
+    }
+}
