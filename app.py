@@ -45,6 +45,7 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf"}
 MAX_FILE_SIZE = 5 * 1024 * 1024
+EINK_CLOCKWISE_ROTATION_OFFSET = 90
 
 
 def allowed_file(filename):
@@ -551,6 +552,10 @@ def fit_to_screen(path, size, background):
     return canvas
 
 
+def corrected_eink_rotation(rotation):
+    return (int(rotation or 0) - EINK_CLOCKWISE_ROTATION_OFFSET) % 360
+
+
 def render_for_screen(filename, screen, device):
     if not upload_exists(filename):
         abort(404)
@@ -560,7 +565,7 @@ def render_for_screen(filename, screen, device):
     source_path = os.path.join(UPLOAD_FOLDER, filename)
 
     if screen == "eink" or config.get("type") == "eink":
-        rotation = config["rotation"]
+        rotation = corrected_eink_rotation(config["rotation"])
         fit_size = size if rotation in (0, 180) else (size[1], size[0])
         rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
         if rotation:
