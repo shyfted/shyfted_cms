@@ -1,12 +1,23 @@
+#!/usr/bin/env python3
 import os
 import time
 import socket
 import subprocess
 import importlib
 import traceback
+import shutil
+import sys
 
-import requests
-from PIL import Image, ImageOps
+try:
+    import requests
+except ModuleNotFoundError:
+    requests = None
+
+try:
+    from PIL import Image, ImageOps
+except ModuleNotFoundError:
+    Image = None
+    ImageOps = None
 
 
 CMS = os.environ.get("SHYFTED_CMS_URL", "https://cms.shyfted.com.au").rstrip("/")
@@ -25,11 +36,10 @@ REQUEST_TIMEOUT = 10
 
 LCD_SIZE = (800, 480)
 EINK_SIZE = (800, 480)
-EINK_ROTATION = int(os.environ.get("SHYFTED_EINK_ROTATION", "0")) % 360
+EINK_ORIENTATION = 180
+DEVICE_SIDE_EINK_ROTATION_ENABLED = False
 EINK_INVERT = os.environ.get("SHYFTED_EINK_INVERT", "false").lower() == "true"
 EINK_THRESHOLD = int(os.environ.get("SHYFTED_EINK_THRESHOLD", "180"))
-
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 lcd_current_key = None
 eink_current_key = None
@@ -46,6 +56,7 @@ DEVICE_SPEC = {
             "width": LCD_SIZE[0],
             "height": LCD_SIZE[1],
             "color": True,
+            "orientation": 0,
             "rotation": 0,
         },
         "eink": {
@@ -53,7 +64,8 @@ DEVICE_SPEC = {
             "width": EINK_SIZE[0],
             "height": EINK_SIZE[1],
             "color": False,
-            "rotation": EINK_ROTATION,
+            "orientation": EINK_ORIENTATION,
+            "rotation": EINK_ORIENTATION,
             "driver": "waveshare_epd.epd7in5_V2",
         },
     },
@@ -62,6 +74,29 @@ DEVICE_SPEC = {
 
 def log(*parts):
     print(*parts, flush=True)
+
+
+def require_dependencies():
+    missing = []
+    if requests is None:
+        missing.append("requests")
+    if Image is None or ImageOps is None:
+        missing.append("Pillow")
+
+    if missing:
+        package_list = ", ".join(missing)
+        log(f"[STARTUP ERROR] Missing Python package(s): {package_list}")
+        log("[STARTUP ERROR] Install dependencies with: python3 -m pip install -r requirements.txt")
+        sys.exit(1)
+
+
+def ensure_download_dir():
+    try:
+        os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+    except OSError as e:
+        log(f"[STARTUP ERROR] Could not create SHYFTED_DOWNLOAD_DIR={DOWNLOAD_DIR!r}: {e}")
+        log("[STARTUP ERROR] Set SHYFTED_DOWNLOAD_DIR to a writable directory and start the client again.")
+        sys.exit(1)
 
 
 def absolute_url(url):
@@ -151,6 +186,10 @@ def stop_lcd():
 def show_lcd(path):
     global viewer
 
+    if shutil.which("feh") is None:
+        log("[LCD ERROR] feh is not installed or not on PATH; cannot display LCD image.")
+        return
+
     stop_lcd()
 
     viewer = subprocess.Popen(
@@ -162,6 +201,25 @@ def show_lcd(path):
             path,
         ]
     )
+
+
+def screen_specs(screen):
+    return {
+        "type": screen.get("type"),
+        "width": screen.get("width"),
+        "height": screen.get("height"),
+        "color": screen.get("color"),
+        "driver": screen.get("driver"),
+    }
+
+
+def log_startup_config():
+    lcd = DEVICE_SPEC["screens"]["lcd"]
+    eink = DEVICE_SPEC["screens"]["eink"]
+    log(f"[STARTUP] declared LCD specs={screen_specs(lcd)}")
+    log(f"[STARTUP] declared e-ink specs={screen_specs(eink)}")
+    log(f"[STARTUP] declared e-ink orientation={eink['orientation']}")
+    log(f"[STARTUP] device-side e-ink rotation disabled={not DEVICE_SIDE_EINK_ROTATION_ENABLED}")
 
 
 def prepare_eink_image(path, target_size, _screen_config=None):
@@ -231,7 +289,11 @@ def show_eink(path, screen_config=None):
 def main():
     global lcd_current_key, eink_current_key
 
+    require_dependencies()
+    ensure_download_dir()
+
     log(f"Device running against {CMS} as {DEVICE_ID}...")
+    log_startup_config()
     send_heartbeat()
 
     last_heartbeat = time.time()
@@ -261,7 +323,8 @@ def main():
             lcd_key = image_key(lcd, timestamp)
 
             if lcd_file and lcd_url and lcd_key != lcd_current_key:
-                path = download(lcd_url, LCD_RENDERED)
+                log(f"[LCD] rendered_cms_url={absolute_url(lcd_url)} file={lcd_file}")
+                path = download(lcd_url, LCD_RENDERED, "LCD")
                 if path:
                     show_lcd(path)
                     lcd_current_key = lcd_key
@@ -270,7 +333,7 @@ def main():
             eink_file = eink.get("file")
             eink_url = eink.get("url")
             eink_key = image_key(eink, timestamp)
-            log(f"[EINK] selected_url={absolute_url(eink_url)} file={eink_file}")
+            log(f"[EINK] rendered_cms_url={absolute_url(eink_url)} file={eink_file}")
 
             if eink_file and eink_url and eink_key != eink_current_key:
                 path = download(eink_url, EINK_RENDERED, "EINK")
@@ -290,7 +353,12 @@ def main():
 
         except Exception as e:
             log_trace("[LOOP ERROR]", e)
-            time.sleep(POLL_SECONDS)
+            try:
+                time.sleep(POLL_SECONDS)
+            except KeyboardInterrupt:
+                stop_lcd()
+                log("Device stopped.")
+                break
 
 
 if __name__ == "__main__":

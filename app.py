@@ -510,14 +510,19 @@ def screen_config(device, screen):
     screens = (device or {}).get("screens") or {}
     config = screens.get(screen) or {}
     defaults = {
-        "lcd": {"width": 800, "height": 480, "type": "lcd", "color": True, "rotation": 0},
-        "eink": {"width": 800, "height": 480, "type": "eink", "color": False, "rotation": 0},
+        "lcd": {"width": 800, "height": 480, "type": "lcd", "color": True, "orientation": 0},
+        "eink": {"width": 800, "height": 480, "type": "eink", "color": False, "orientation": 0},
     }
 
     merged = {**defaults.get(screen, {}), **config}
     merged["width"] = int(merged.get("width") or 800)
     merged["height"] = int(merged.get("height") or 480)
-    merged["rotation"] = int(merged.get("rotation") or 0) % 360
+    orientation = config.get(
+        "orientation",
+        config.get("rotation", defaults.get(screen, {}).get("orientation", 0)),
+    )
+    merged["orientation"] = int(orientation or 0) % 360
+    merged["rotation"] = merged["orientation"]
     return merged
 
 
@@ -669,7 +674,7 @@ def normalise_screens(screens):
             continue
 
         clean_screen = {}
-        for key in ("type", "width", "height", "color", "rotation", "driver"):
+        for key in ("type", "width", "height", "color", "orientation", "rotation", "driver"):
             if key in screen:
                 clean_screen[key] = screen[key]
 
