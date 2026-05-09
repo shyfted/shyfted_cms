@@ -534,7 +534,9 @@ def render_for_screen(filename, screen, device):
     source_path = os.path.join(UPLOAD_FOLDER, filename)
 
     if screen == "eink" or config.get("type") == "eink":
-        rendered = fit_to_screen(source_path, size, (255, 255, 255))
+        rotated_size = (size[1], size[0])
+        rendered = fit_to_screen(source_path, rotated_size, (255, 255, 255))
+        rendered = rendered.rotate(90, expand=True)
         rendered = rendered.convert("L").convert("1")
         output = BytesIO()
         rendered.save(output, "PNG")
@@ -1079,11 +1081,11 @@ def config(device_id):
     return jsonify({
         "lcd": {
             "file": state.get("lcd"),
-            "url": versioned_upload_url(state.get("lcd"), timestamp)
+            "url": rendered_upload_url(device_id, "lcd", state.get("lcd"), timestamp)
         },
         "eink": {
             "file": state.get("eink"),
-            "url": versioned_upload_url(state.get("eink"), timestamp)
+            "url": rendered_upload_url(device_id, "eink", state.get("eink"), timestamp)
         },
         "timestamp": timestamp,
         "device": device

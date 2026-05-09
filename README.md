@@ -27,7 +27,7 @@ export CMS_ADMIN_PASSWORD='replace-with-a-long-temporary-password'
 flask --app app run --host 0.0.0.0 --port 5050
 ```
 
-The app creates database tables automatically on startup. If no CMS users exist yet and `CMS_ADMIN_EMAIL` and `CMS_ADMIN_PASSWORD` are set, the app creates the first admin account from those environment variables. If users already exist, those variables are ignored. There is no public registration; after bootstrap, admins can create staff or admin users from `/users`.
+The app creates database tables automatically on startup. If no CMS users exist yet and `CMS_ADMIN_EMAIL` and `CMS_ADMIN_PASSWORD` are set, the app creates the first admin account from those environment variables. After the first successful admin login, remove `CMS_ADMIN_EMAIL` and `CMS_ADMIN_PASSWORD` from the deployment environment. If users already exist, those variables are ignored. There is no public registration; after bootstrap, admins can create staff or admin users from `/users`.
 
 ## Production Run
 

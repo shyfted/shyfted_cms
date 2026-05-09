@@ -29,11 +29,41 @@
     <input id="email" name="email" type="email" autocomplete="username" required class="mb-3 w-full rounded border border-[#2a3344] bg-[#111722] p-2 text-[#eef3fb]">
 
     <label class="mb-1 block text-sm font-semibold text-[#dbe4f3]" for="password">Password</label>
-    <input id="password" name="password" type="password" autocomplete="current-password" required class="mb-4 w-full rounded border border-[#2a3344] bg-[#111722] p-2 text-[#eef3fb]">
+    <div class="relative mb-4">
+        <input id="password" name="password" type="password" autocomplete="current-password" required class="w-full rounded border border-[#2a3344] bg-[#111722] p-2 pr-11 text-[#eef3fb]">
+        <button id="togglePassword" type="button" aria-label="Show password" aria-pressed="false" class="absolute inset-y-0 right-0 flex w-10 items-center justify-center rounded-r text-[#94a3b8] hover:text-[#eef3fb] focus:outline-none focus:ring-2 focus:ring-[#f7d99d]">
+            <svg id="eyeOpen" xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+            <svg id="eyeClosed" xmlns="http://www.w3.org/2000/svg" class="hidden h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M3 3l18 18"></path>
+                <path d="M10.6 10.6a2 2 0 0 0 2.8 2.8"></path>
+                <path d="M9.9 5.2A9.4 9.4 0 0 1 12 5c6.5 0 10 7 10 7a17.8 17.8 0 0 1-2.3 3.2"></path>
+                <path d="M6.6 6.6C3.6 8.5 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 4.4-1"></path>
+            </svg>
+        </button>
+    </div>
 
     <button class="w-full rounded bg-[#f7d99d] p-2 font-bold text-[#3f2f13]">Login</button>
     <a class="mt-4 block text-center text-sm text-[#c7ddff]" href="{{ url_for('forgot_password') }}">Forgot password?</a>
 </form>
+
+<script>
+    const passwordInput = document.getElementById("password");
+    const togglePassword = document.getElementById("togglePassword");
+    const eyeOpen = document.getElementById("eyeOpen");
+    const eyeClosed = document.getElementById("eyeClosed");
+
+    togglePassword.addEventListener("click", () => {
+        const isHidden = passwordInput.type === "password";
+        passwordInput.type = isHidden ? "text" : "password";
+        togglePassword.setAttribute("aria-label", isHidden ? "Hide password" : "Show password");
+        togglePassword.setAttribute("aria-pressed", String(isHidden));
+        eyeOpen.classList.toggle("hidden", isHidden);
+        eyeClosed.classList.toggle("hidden", !isHidden);
+    });
+</script>
 
 </body>
 </html>
