@@ -357,20 +357,25 @@ button:hover { filter:brightness(0.97); }
     border-radius:8px;
     display:flex;
     justify-content:center;
-    min-height:260px;
+    min-height:360px;
     overflow:hidden;
+    padding:16px;
 }
 
 .preview-frame img,
 .preview-frame object {
     display:block;
-    max-height:70vh;
+    height:auto;
+    max-height:72vh;
     max-width:100%;
+    min-width:50mm;
     object-fit:contain;
+    width:auto;
 }
 
 .preview-frame object {
     height:520px;
+    min-width:min(50mm, 100%);
     width:100%;
 }
 
@@ -549,17 +554,17 @@ button:hover { filter:brightness(0.97); }
         </div>
 
         <div class="preview-panel" data-preview-panel="normalised">
-            <h3>Normalised master</h3>
+            <h3>EXIF normalised preview</h3>
             <div class="preview-frame"><img id="normalisedPreview"></div>
         </div>
 
         <div class="preview-panel" data-preview-panel="lcd">
-            <h3>LCD prepared file</h3>
+            <h3>LCD render preview</h3>
             <div class="preview-frame"><img id="lcdPreview"></div>
         </div>
 
         <div class="preview-panel" data-preview-panel="eink">
-            <h3>E-ink prepared file</h3>
+            <h3>E-ink render preview</h3>
             <div class="preview-frame"><img id="einkPreview"></div>
         </div>
 

@@ -36,7 +36,6 @@ REQUEST_TIMEOUT = 10
 LCD_SIZE = (800, 480)
 EINK_SIZE = (800, 480)
 EINK_ORIENTATION = 180
-DEVICE_SIDE_EINK_ROTATION_ENABLED = False
 
 lcd_current_key = None
 eink_current_key = None
@@ -125,7 +124,7 @@ def poll_config():
 
 
 def image_key(screen_data, timestamp):
-    return f"{screen_data.get('file')}:{screen_data.get('url')}:{timestamp}"
+    return screen_data.get("content_id") or f"{screen_data.get('file')}:{screen_data.get('url')}"
 
 
 def download(url, target_path, label=None):
@@ -216,7 +215,6 @@ def log_startup_config():
     log(f"[STARTUP] declared LCD specs={screen_specs(lcd)}")
     log(f"[STARTUP] declared e-ink specs={screen_specs(eink)}")
     log(f"[STARTUP] declared e-ink orientation={eink['orientation']}")
-    log(f"[STARTUP] device-side e-ink rotation disabled={not DEVICE_SIDE_EINK_ROTATION_ENABLED}")
 
 
 def prepare_eink_image(path, target_size, _screen_config=None):
@@ -224,11 +222,11 @@ def prepare_eink_image(path, target_size, _screen_config=None):
     log(f"[EINK REFRESH] loaded image path={path} mode={img.mode} size={img.size}")
 
     if img.size != target_size:
-        log(f"[EINK REFRESH] resizing image from {img.size} to {target_size}")
+        log(f"[EINK REFRESH] final CMS image size {img.size} differs from panel size {target_size}; resizing defensively")
         img = img.resize(target_size, Image.Resampling.LANCZOS)
 
     if img.mode != "1":
-        log(f"[EINK REFRESH] converting prepared image mode from {img.mode} to 1")
+        log(f"[EINK REFRESH] final CMS image mode is {img.mode}; converting defensively to 1")
         img = img.convert("1")
 
     return img
@@ -309,7 +307,9 @@ def main():
                 "[CONFIG] received "
                 f"timestamp={timestamp} "
                 f"lcd_file={(data.get('lcd') or {}).get('file')} "
-                f"eink_file={(data.get('eink') or {}).get('file')}"
+                f"lcd_content_id={(data.get('lcd') or {}).get('content_id')} "
+                f"eink_file={(data.get('eink') or {}).get('file')} "
+                f"eink_content_id={(data.get('eink') or {}).get('content_id')}"
             )
 
             lcd = data.get("lcd", {})

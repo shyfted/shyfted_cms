@@ -1,16 +1,17 @@
-.DS_Store
 .env
-__pycache__/
-*.py[cod]
+*.db
+*.sqlite
+data/*.json
+uploads/
+static/uploads/
+rendered/
+previews/
+cache/
+**pycache**/
+*.pyc
+.DS_Store
+latest.png
 
 # Local runtime/media state
-data/*.db
 data/*.db-*
-data/*.json
-static/uploads/
-static/latest.png
-latest.png
 products.json
-
-# Local one-off backups
-shyfted_CMS_archive/
