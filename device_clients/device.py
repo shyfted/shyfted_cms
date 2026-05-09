@@ -3,9 +3,10 @@ import time
 import socket
 import subprocess
 import importlib
+import traceback
 
 import requests
-from PIL import Image
+from PIL import Image, ImageOps
 
 
 CMS = os.environ.get("SHYFTED_CMS_URL", "https://cms.shyfted.com.au").rstrip("/")
@@ -24,6 +25,9 @@ REQUEST_TIMEOUT = 10
 
 LCD_SIZE = (800, 480)
 EINK_SIZE = (800, 480)
+EINK_ROTATION = int(os.environ.get("SHYFTED_EINK_ROTATION", "0")) % 360
+EINK_INVERT = os.environ.get("SHYFTED_EINK_INVERT", "false").lower() == "true"
+EINK_THRESHOLD = int(os.environ.get("SHYFTED_EINK_THRESHOLD", "180"))
 
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
@@ -35,7 +39,7 @@ viewer = None
 DEVICE_SPEC = {
     "name": "The frankenstein",
     "hostname": socket.gethostname(),
-    "client_version": "frankenstein-2",
+    "client_version": "frankenstein-3",
     "screens": {
         "lcd": {
             "type": "lcd",
@@ -49,7 +53,7 @@ DEVICE_SPEC = {
             "width": EINK_SIZE[0],
             "height": EINK_SIZE[1],
             "color": False,
-            "rotation": 0,
+            "rotation": EINK_ROTATION,
             "driver": "waveshare_epd.epd7in5_V2",
         },
     },
@@ -101,6 +105,11 @@ def download(url, target_path, label=None):
     try:
         response = requests.get(source_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
+        content_type = response.headers.get("content-type", "")
+
+        if label and "image" not in content_type.lower():
+            preview = response.content[:120].decode("utf-8", errors="replace")
+            log(f"[{label} DOWNLOAD] non-image response content_type={content_type} preview={preview!r}")
 
         with open(target_path, "wb") as f:
             f.write(response.content)
@@ -118,6 +127,11 @@ def download(url, target_path, label=None):
         else:
             log("[DOWNLOAD ERROR]", e)
         return None
+
+
+def log_trace(label, error):
+    log(label, repr(error))
+    log(traceback.format_exc())
 
 
 def stop_lcd():
@@ -150,6 +164,40 @@ def show_lcd(path):
     )
 
 
+def prepare_eink_image(path, target_size, _screen_config=None):
+    img = Image.open(path)
+    img = ImageOps.exif_transpose(img)
+    log(f"[EINK REFRESH] loaded image path={path} mode={img.mode} size={img.size}")
+
+    if img.size != target_size:
+        log(f"[EINK REFRESH] resizing image from {img.size} to {target_size}")
+        img = img.resize(target_size, Image.Resampling.LANCZOS)
+
+    img = img.convert("L")
+    if EINK_INVERT:
+        log("[EINK REFRESH] inverting image because SHYFTED_EINK_INVERT=true")
+        img = ImageOps.invert(img)
+
+    return img.point(lambda px: 255 if px >= EINK_THRESHOLD else 0, mode="1")
+
+
+def clear_eink(epd):
+    clear = getattr(epd, "Clear", None)
+    if not callable(clear):
+        return
+
+    try:
+        clear()
+        return
+    except TypeError:
+        pass
+
+    try:
+        clear(0xFF)
+    except Exception as e:
+        log("[EINK REFRESH] clear skipped", repr(e))
+
+
 def show_eink(path, screen_config=None):
     screen_config = screen_config or {}
     driver = screen_config.get("driver") or DEVICE_SPEC["screens"]["eink"]["driver"]
@@ -167,82 +215,83 @@ def show_eink(path, screen_config=None):
         f"height={getattr(epd, 'height', EINK_SIZE[1])}"
     )
 
-    img = Image.open(path)
     target_size = (
         int(getattr(epd, "width", EINK_SIZE[0])),
         int(getattr(epd, "height", EINK_SIZE[1])),
     )
-    log(f"[EINK REFRESH] loaded image path={path} mode={img.mode} size={img.size}")
-
-    if img.size != target_size:
-        log(f"[EINK REFRESH] resizing image from {img.size} to {target_size}")
-        img = img.resize(target_size)
-
-    img = img.convert("1")
+    img = prepare_eink_image(path, target_size, screen_config)
 
     log("[EINK REFRESH] physical refresh start")
+    clear_eink(epd)
     epd.display(epd.getbuffer(img))
     epd.sleep()
     log("[EINK REFRESH] physical refresh complete")
 
 
-log(f"Device running against {CMS} as {DEVICE_ID}...")
-send_heartbeat()
+def main():
+    global lcd_current_key, eink_current_key
 
-last_heartbeat = time.time()
+    log(f"Device running against {CMS} as {DEVICE_ID}...")
+    send_heartbeat()
 
-while True:
-    try:
-        now = time.time()
+    last_heartbeat = time.time()
 
-        if now - last_heartbeat >= HEARTBEAT_SECONDS:
-            send_heartbeat()
-            last_heartbeat = now
+    while True:
+        try:
+            now = time.time()
 
-        data = poll_config()
-        timestamp = data.get("timestamp")
-        device = data.get("device") or {}
-        screens = device.get("screens") or DEVICE_SPEC["screens"]
-        log(
-            "[CONFIG] received "
-            f"timestamp={timestamp} "
-            f"lcd_file={(data.get('lcd') or {}).get('file')} "
-            f"eink_file={(data.get('eink') or {}).get('file')}"
-        )
+            if now - last_heartbeat >= HEARTBEAT_SECONDS:
+                send_heartbeat()
+                last_heartbeat = now
 
-        lcd = data.get("lcd", {})
-        lcd_file = lcd.get("file")
-        lcd_url = lcd.get("url")
-        lcd_key = image_key(lcd, timestamp)
+            data = poll_config()
+            timestamp = data.get("timestamp")
+            device = data.get("device") or {}
+            screens = device.get("screens") or DEVICE_SPEC["screens"]
+            log(
+                "[CONFIG] received "
+                f"timestamp={timestamp} "
+                f"lcd_file={(data.get('lcd') or {}).get('file')} "
+                f"eink_file={(data.get('eink') or {}).get('file')}"
+            )
 
-        if lcd_file and lcd_url and lcd_key != lcd_current_key:
-            path = download(lcd_url, LCD_RENDERED)
-            if path:
-                show_lcd(path)
-                lcd_current_key = lcd_key
+            lcd = data.get("lcd", {})
+            lcd_file = lcd.get("file")
+            lcd_url = lcd.get("url")
+            lcd_key = image_key(lcd, timestamp)
 
-        eink = data.get("eink", {})
-        eink_file = eink.get("file")
-        eink_url = eink.get("url")
-        eink_key = image_key(eink, timestamp)
-        log(f"[EINK] selected_url={absolute_url(eink_url)} file={eink_file}")
+            if lcd_file and lcd_url and lcd_key != lcd_current_key:
+                path = download(lcd_url, LCD_RENDERED)
+                if path:
+                    show_lcd(path)
+                    lcd_current_key = lcd_key
 
-        if eink_file and eink_url and eink_key != eink_current_key:
-            path = download(eink_url, EINK_RENDERED, "EINK")
-            if path:
-                try:
-                    show_eink(path, screens.get("eink"))
-                    eink_current_key = eink_key
-                except Exception as e:
-                    log("[EINK REFRESH] physical refresh failure", e)
+            eink = data.get("eink", {})
+            eink_file = eink.get("file")
+            eink_url = eink.get("url")
+            eink_key = image_key(eink, timestamp)
+            log(f"[EINK] selected_url={absolute_url(eink_url)} file={eink_file}")
 
-        time.sleep(POLL_SECONDS)
+            if eink_file and eink_url and eink_key != eink_current_key:
+                path = download(eink_url, EINK_RENDERED, "EINK")
+                if path:
+                    try:
+                        show_eink(path, screens.get("eink"))
+                        eink_current_key = eink_key
+                    except Exception as e:
+                        log_trace("[EINK REFRESH] physical refresh failure", e)
 
-    except KeyboardInterrupt:
-        stop_lcd()
-        log("Device stopped.")
-        break
+            time.sleep(POLL_SECONDS)
 
-    except Exception as e:
-        log("[LOOP ERROR]", e)
-        time.sleep(POLL_SECONDS)
+        except KeyboardInterrupt:
+            stop_lcd()
+            log("Device stopped.")
+            break
+
+        except Exception as e:
+            log_trace("[LOOP ERROR]", e)
+            time.sleep(POLL_SECONDS)
+
+
+if __name__ == "__main__":
+    main()

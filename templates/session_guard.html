@@ -1,0 +1,37 @@
+{% if current_user %}
+<script>
+(function () {
+    const token = {{ session.get("window_token", "")|tojson }};
+    if (!token) {
+        return;
+    }
+
+    const key = {{ window_session_storage_key|tojson }};
+    const isNewWindowSession = {{ session.get("window_session_new", false)|tojson }};
+    const storedToken = window.sessionStorage.getItem(key);
+    const csrfToken = {{ csrf_token()|tojson }};
+
+    function postForm(url) {
+        return fetch(url, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded"
+            },
+            body: new URLSearchParams({csrf_token: csrfToken})
+        });
+    }
+
+    if (isNewWindowSession || storedToken === token) {
+        window.sessionStorage.setItem(key, token);
+        postForm({{ url_for("confirm_window_session")|tojson }}).catch(function () {});
+        return;
+    }
+
+    window.sessionStorage.removeItem(key);
+    postForm({{ url_for("logout")|tojson }}).finally(function () {
+        window.location.replace({{ url_for("login")|tojson }});
+    });
+}());
+</script>
+{% endif %}

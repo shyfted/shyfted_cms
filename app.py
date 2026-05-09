@@ -26,6 +26,7 @@ UPLOAD_FOLDER = os.path.join("static", "uploads")
 APP_URL = os.environ.get("APP_URL", "http://localhost:5050").rstrip("/")
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(DATA_DIR, 'cms.db')}")
 SESSION_LIFETIME_HOURS = int(os.environ.get("SESSION_LIFETIME_HOURS", "8"))
+WINDOW_SESSION_STORAGE_KEY = "shyfted_cms_window_token"
 RESET_TOKEN_MINUTES = int(os.environ.get("RESET_TOKEN_MINUTES", "30"))
 LOGIN_RATE_LIMIT = int(os.environ.get("LOGIN_RATE_LIMIT", "5"))
 RESET_RATE_LIMIT = int(os.environ.get("RESET_RATE_LIMIT", "5"))
@@ -218,6 +219,12 @@ def current_user():
     return user
 
 
+def start_window_session():
+    session.permanent = False
+    session["window_token"] = secrets.token_urlsafe(32)
+    session["window_session_new"] = True
+
+
 def hash_password(password):
     return generate_password_hash(password, method="pbkdf2:sha256:600000", salt_length=16)
 
@@ -360,6 +367,7 @@ def inject_auth_context():
     return {
         "csrf_token": generate_csrf_token,
         "current_user": current_user(),
+        "window_session_storage_key": WINDOW_SESSION_STORAGE_KEY,
     }
 
 
@@ -511,6 +519,18 @@ def screen_config(device, screen):
     merged["height"] = int(merged.get("height") or 480)
     merged["rotation"] = int(merged.get("rotation") or 0) % 360
     return merged
+
+
+def effective_device(device):
+    if device:
+        return device
+
+    return {
+        "screens": {
+            "lcd": screen_config(None, "lcd"),
+            "eink": screen_config(None, "eink"),
+        }
+    }
 
 
 def fit_to_screen(path, size, background):
@@ -700,7 +720,7 @@ def login():
         user = find_user_by_email(email)
         if user and user["is_active"] and check_password_hash(user["password_hash"], password):
             session.clear()
-            session.permanent = True
+            start_window_session()
             session["user_id"] = user["id"]
             session["user_role"] = user["role"]
             session["expires_at"] = (datetime.utcnow() + timedelta(hours=SESSION_LIFETIME_HOURS)).isoformat()
@@ -718,6 +738,14 @@ def login():
         error = "Invalid email or password"
 
     return render_template("login.html", error=error)
+
+
+@app.route("/window-session/confirm", methods=["POST"])
+@login_required
+def confirm_window_session():
+    validate_csrf()
+    session.pop("window_session_new", None)
+    return jsonify({"success": True})
 
 
 @app.route("/logout", methods=["POST"])
@@ -1078,7 +1106,7 @@ def delete():
 @app.route("/device/<device_id>/config")
 def config(device_id):
     state = get_display()
-    device = get_device(device_id)
+    device = effective_device(get_device(device_id))
     timestamp = state.get("timestamp")
 
     return jsonify({
@@ -1101,7 +1129,7 @@ def render_upload(device_id, screen, filename):
         abort(404)
 
     filename = clean_filename(filename)
-    device = get_device(device_id)
+    device = effective_device(get_device(device_id))
     output, mimetype, extension = render_for_screen(filename, screen, device)
 
     base = filename.rsplit(".", 1)[0]
