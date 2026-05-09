@@ -14,10 +14,9 @@ except ModuleNotFoundError:
     requests = None
 
 try:
-    from PIL import Image, ImageOps
+    from PIL import Image
 except ModuleNotFoundError:
     Image = None
-    ImageOps = None
 
 
 CMS = os.environ.get("SHYFTED_CMS_URL", "https://cms.shyfted.com.au").rstrip("/")
@@ -38,8 +37,6 @@ LCD_SIZE = (800, 480)
 EINK_SIZE = (800, 480)
 EINK_ORIENTATION = 180
 DEVICE_SIDE_EINK_ROTATION_ENABLED = False
-EINK_INVERT = os.environ.get("SHYFTED_EINK_INVERT", "false").lower() == "true"
-EINK_THRESHOLD = int(os.environ.get("SHYFTED_EINK_THRESHOLD", "180"))
 
 lcd_current_key = None
 eink_current_key = None
@@ -80,7 +77,7 @@ def require_dependencies():
     missing = []
     if requests is None:
         missing.append("requests")
-    if Image is None or ImageOps is None:
+    if Image is None:
         missing.append("Pillow")
 
     if missing:
@@ -224,19 +221,17 @@ def log_startup_config():
 
 def prepare_eink_image(path, target_size, _screen_config=None):
     img = Image.open(path)
-    img = ImageOps.exif_transpose(img)
     log(f"[EINK REFRESH] loaded image path={path} mode={img.mode} size={img.size}")
 
     if img.size != target_size:
         log(f"[EINK REFRESH] resizing image from {img.size} to {target_size}")
         img = img.resize(target_size, Image.Resampling.LANCZOS)
 
-    img = img.convert("L")
-    if EINK_INVERT:
-        log("[EINK REFRESH] inverting image because SHYFTED_EINK_INVERT=true")
-        img = ImageOps.invert(img)
+    if img.mode != "1":
+        log(f"[EINK REFRESH] converting prepared image mode from {img.mode} to 1")
+        img = img.convert("1")
 
-    return img.point(lambda px: 255 if px >= EINK_THRESHOLD else 0, mode="1")
+    return img
 
 
 def clear_eink(epd):

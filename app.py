@@ -23,6 +23,12 @@ if not app.secret_key:
 
 DATA_DIR = "data"
 UPLOAD_FOLDER = os.path.join("static", "uploads")
+ORIGINAL_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, "original")
+NORMALISED_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, "normalised")
+RENDERED_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, "rendered")
+LCD_RENDERED_FOLDER = os.path.join(RENDERED_UPLOAD_FOLDER, "lcd")
+EINK_RENDERED_FOLDER = os.path.join(RENDERED_UPLOAD_FOLDER, "eink")
+THUMBNAIL_FOLDER = os.path.join(UPLOAD_FOLDER, "thumbs")
 APP_URL = os.environ.get("APP_URL", "http://localhost:5050").rstrip("/")
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(DATA_DIR, 'cms.db')}")
 SESSION_LIFETIME_HOURS = int(os.environ.get("SESSION_LIFETIME_HOURS", "8"))
@@ -42,6 +48,14 @@ app.config.update(
 
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+for upload_dir in (
+    ORIGINAL_UPLOAD_FOLDER,
+    NORMALISED_UPLOAD_FOLDER,
+    LCD_RENDERED_FOLDER,
+    EINK_RENDERED_FOLDER,
+    THUMBNAIL_FOLDER,
+):
+    os.makedirs(upload_dir, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf"}
 MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -88,6 +102,14 @@ def converted_pdf_path(path):
     return path.rsplit(".", 1)[0] + ".jpg"
 
 
+def converted_pdf_filename(filename):
+    return filename.rsplit(".", 1)[0] + ".jpg"
+
+
+def upload_path(folder, filename):
+    return os.path.join(folder, filename)
+
+
 def load_json(filename, default):
     path = os.path.join(DATA_DIR, filename)
     if not os.path.exists(path):
@@ -99,6 +121,14 @@ def load_json(filename, default):
 def save_json(filename, data):
     with open(os.path.join(DATA_DIR, filename), "w") as f:
         json.dump(data, f, indent=4)
+
+
+def get_media_catalog():
+    return load_json("media.json", {})
+
+
+def save_media_catalog(catalog):
+    save_json("media.json", catalog)
 
 
 def utc_timestamp():
@@ -433,50 +463,159 @@ def convert_pdf(path):
     return os.path.basename(out)
 
 
-def normalise_image(path, extension):
-    img = Image.open(path)
+def convert_pdf_to_image(source_path, output_path):
+    with fitz.open(source_path) as doc:
+        if doc.page_count < 1:
+            raise ValueError("PDF has no pages")
+
+        page = doc.load_page(0)
+        pix = page.get_pixmap()
+        pix.save(output_path)
+
+
+def save_normalised_image(source_path, output_path, extension):
+    img = Image.open(source_path)
     img = ImageOps.exif_transpose(img)
     img = img.convert("RGB")
     img.thumbnail((2000, 2000))
 
     if extension == "png":
-        img.save(path, "PNG")
+        img.save(output_path, "PNG")
     else:
-        img.save(path, "JPEG", quality=90)
+        img.save(output_path, "JPEG", quality=90)
 
 
-def make_thumb(path):
-    img = Image.open(path).convert("RGB")
+def make_thumb(source_path, output_path):
+    img = Image.open(source_path).convert("RGB")
     img.thumbnail((200, 140))
-    img.save(path + ".png")
+    img.save(output_path, "PNG")
 
 
-def is_generated_thumb(filename):
-    if not filename.endswith(".png"):
-        return False
+def legacy_upload_path(filename):
+    return upload_path(UPLOAD_FOLDER, filename)
 
-    original = filename[:-4]
-    return os.path.exists(os.path.join(UPLOAD_FOLDER, original))
+
+def normalised_upload_path(filename):
+    return upload_path(NORMALISED_UPLOAD_FOLDER, filename)
+
+
+def original_upload_path(filename):
+    return upload_path(ORIGINAL_UPLOAD_FOLDER, filename)
+
+
+def rendered_upload_path(screen, filename):
+    folder = LCD_RENDERED_FOLDER if screen == "lcd" else EINK_RENDERED_FOLDER
+    extension = "jpg" if screen == "lcd" else "png"
+    base = filename.rsplit(".", 1)[0]
+    return upload_path(folder, f"{base}.{extension}")
+
+
+def thumb_upload_path(filename):
+    return upload_path(THUMBNAIL_FOLDER, f"{filename}.png")
+
+
+def existing_source_path(filename):
+    normalised = normalised_upload_path(filename)
+    if os.path.isfile(normalised):
+        return normalised
+
+    legacy = legacy_upload_path(filename)
+    if os.path.isfile(legacy):
+        return legacy
+
+    return None
+
+
+def public_upload_url(folder, filename, version=None):
+    url = f"/static/uploads/{folder}/{filename}"
+    if version is not None:
+        url = f"{url}?v={version}"
+    return url
+
+
+def original_preview_url(filename, catalog, version=None):
+    original = (catalog.get(filename) or {}).get("original") or filename
+    if os.path.isfile(original_upload_path(original)):
+        return public_upload_url("original", original, version)
+    return versioned_upload_url(filename, version)
 
 
 def upload_exists(filename):
     if not filename:
         return False
 
-    path = os.path.join(UPLOAD_FOLDER, filename)
-    return os.path.isfile(path) and not is_generated_thumb(filename)
+    return existing_source_path(filename) is not None
+
+
+def derivative_exists(screen, filename):
+    return os.path.isfile(rendered_upload_path(screen, filename))
+
+
+def render_reference_device():
+    devices = get_devices()
+    if not devices:
+        return None
+
+    first_device_id = sorted(devices.keys())[0]
+    return devices[first_device_id]
+
+
+def ensure_rendered_derivatives(filename, device=None, force=False):
+    source_path = existing_source_path(filename)
+    if not source_path:
+        return False
+
+    device = device if device is not None else render_reference_device()
+    for screen in ("lcd", "eink"):
+        output_path = rendered_upload_path(screen, filename)
+        if force or not os.path.isfile(output_path):
+            render_for_screen_to_file(filename, screen, device, output_path)
+
+    thumb_path = thumb_upload_path(filename)
+    if not os.path.isfile(thumb_path):
+        make_thumb(source_path, thumb_path)
+
+    return True
 
 
 def list_uploads():
     files = []
+    seen = set()
+    catalog = get_media_catalog()
 
-    for filename in os.listdir(UPLOAD_FOLDER):
-        path = os.path.join(UPLOAD_FOLDER, filename)
-        if os.path.isfile(path) and not is_generated_thumb(filename):
+    for filename in os.listdir(NORMALISED_UPLOAD_FOLDER):
+        path = normalised_upload_path(filename)
+        if os.path.isfile(path):
+            ensure_rendered_derivatives(filename)
+            version = int(os.path.getmtime(path))
             files.append({
                 "name": filename,
-                "version": int(os.path.getmtime(path)),
+                "version": version,
+                "thumb_url": public_upload_url("thumbs", f"{filename}.png", version),
+                "original_url": original_preview_url(filename, catalog, version),
+                "normalised_url": public_upload_url("normalised", filename, version),
+                "lcd_url": prepared_upload_url("lcd", filename, version),
+                "eink_url": prepared_upload_url("eink", filename, version),
             })
+            seen.add(filename)
+
+    for filename in os.listdir(UPLOAD_FOLDER):
+        path = legacy_upload_path(filename)
+        if filename in seen or not os.path.isfile(path):
+            continue
+        if filename.endswith(".png") and os.path.isfile(legacy_upload_path(filename[:-4])):
+            continue
+        ensure_rendered_derivatives(filename)
+        version = int(os.path.getmtime(path))
+        files.append({
+            "name": filename,
+            "version": version,
+            "thumb_url": versioned_upload_url(f"{filename}.png", version),
+            "original_url": versioned_upload_url(filename, version),
+            "normalised_url": versioned_upload_url(filename, version),
+            "lcd_url": prepared_upload_url("lcd", filename, version),
+            "eink_url": prepared_upload_url("eink", filename, version),
+        })
 
     return sorted(files, key=lambda item: item["name"])
 
@@ -501,6 +640,23 @@ def rendered_upload_url(device_id, screen, filename, version=None):
         return None
 
     url = f"/device/{device_id}/render/{screen}/{filename}"
+    if version is not None:
+        url = f"{url}?v={version}"
+
+    return url
+
+
+def prepared_upload_url(screen, filename, version=None):
+    if not filename:
+        return None
+
+    path = rendered_upload_path(screen, filename)
+    if version is None and os.path.exists(path):
+        version = int(os.path.getmtime(path))
+
+    extension = "jpg" if screen == "lcd" else "png"
+    base = filename.rsplit(".", 1)[0]
+    url = f"/static/uploads/rendered/{screen}/{base}.{extension}"
     if version is not None:
         url = f"{url}?v={version}"
 
@@ -560,9 +716,27 @@ def render_for_screen(filename, screen, device):
     if not upload_exists(filename):
         abort(404)
 
+    rendered = render_screen_image(filename, screen, device)
+    output = BytesIO()
+    if screen == "eink":
+        rendered.save(output, "PNG")
+        mimetype = "image/png"
+        extension = "png"
+    else:
+        rendered.save(output, "JPEG", quality=92)
+        mimetype = "image/jpeg"
+        extension = "jpg"
+
+    output.seek(0)
+    return output, mimetype, extension
+
+
+def render_screen_image(filename, screen, device=None):
     config = screen_config(device, screen)
     size = (config["width"], config["height"])
-    source_path = os.path.join(UPLOAD_FOLDER, filename)
+    source_path = existing_source_path(filename)
+    if not source_path:
+        abort(404)
 
     if screen == "eink" or config.get("type") == "eink":
         rotation = corrected_eink_rotation(config["rotation"])
@@ -570,17 +744,18 @@ def render_for_screen(filename, screen, device):
         rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
         if rotation:
             rendered = rendered.rotate(rotation, expand=True)
-        rendered = rendered.convert("L").convert("1", dither=Image.Dither.FLOYDSTEINBERG)
-        output = BytesIO()
-        rendered.save(output, "PNG")
-        output.seek(0)
-        return output, "image/png", "png"
+        return rendered.convert("L").convert("1", dither=Image.Dither.FLOYDSTEINBERG)
 
-    rendered = fit_to_screen(source_path, size, (0, 0, 0))
-    output = BytesIO()
-    rendered.save(output, "JPEG", quality=92)
-    output.seek(0)
-    return output, "image/jpeg", "jpg"
+    return fit_to_screen(source_path, size, (0, 0, 0))
+
+
+def render_for_screen_to_file(filename, screen, device, output_path):
+    rendered = render_screen_image(filename, screen, device)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if screen == "eink":
+        rendered.save(output_path, "PNG")
+    else:
+        rendered.save(output_path, "JPEG", quality=92)
 
 
 # ===== DISPLAY (LIVE) =====
@@ -980,41 +1155,54 @@ def upload():
         flash("Choose a valid file to upload.", "error")
         return redirect("/")
 
-    extension = get_extension(filename)
-    path = os.path.join(UPLOAD_FOLDER, filename)
-    final_path = converted_pdf_path(path) if extension == "pdf" else path
+    original_filename = filename
+    extension = get_extension(original_filename)
+    filename = converted_pdf_filename(original_filename) if extension == "pdf" else original_filename
+    original_path = original_upload_path(original_filename)
+    normalised_path = normalised_upload_path(filename)
 
-    conflict = upload_target_conflict(path)
-    if conflict:
-        flash(conflict, "error")
+    conflicts = [
+        original_path,
+        normalised_path,
+        rendered_upload_path("lcd", filename),
+        rendered_upload_path("eink", filename),
+        thumb_upload_path(filename),
+        legacy_upload_path(filename),
+        legacy_upload_path(f"{filename}.png"),
+    ]
+    if any(os.path.exists(path) for path in conflicts):
+        flash("A file with that name already exists.", "error")
         return redirect("/")
 
-    if final_path != path:
-        conflict = upload_target_conflict(final_path)
-        if conflict:
-            if os.path.exists(final_path):
-                flash("A converted JPG with that name already exists.", "error")
-            else:
-                flash("A thumbnail for the converted JPG already exists.", "error")
-            return redirect("/")
-
-    file.save(path)
-    saved_path = path
+    file.save(original_path)
 
     try:
         if extension == "pdf":
-            new = convert_pdf(path)
-            os.remove(path)
-            filename = new
-            path = os.path.join(UPLOAD_FOLDER, filename)
-            extension = "jpg"
+            convert_pdf_to_image(original_path, normalised_path)
+        else:
+            save_normalised_image(original_path, normalised_path, extension)
 
-        normalise_image(path, extension)
-        make_thumb(path)
+        render_device = render_reference_device()
+        render_for_screen_to_file(filename, "lcd", render_device, rendered_upload_path("lcd", filename))
+        render_for_screen_to_file(filename, "eink", render_device, rendered_upload_path("eink", filename))
+        make_thumb(normalised_path, thumb_upload_path(filename))
+
+        catalog = get_media_catalog()
+        catalog[filename] = {
+            "original": original_filename,
+            "normalised": filename,
+            "lcd": os.path.basename(rendered_upload_path("lcd", filename)),
+            "eink": os.path.basename(rendered_upload_path("eink", filename)),
+            "created_at": utc_timestamp(),
+        }
+        save_media_catalog(catalog)
     except Exception as e:
         print("[UPLOAD ERROR]", e)
-        cleanup_upload(saved_path)
-        cleanup_upload(path)
+        cleanup_upload(original_path)
+        cleanup_upload(normalised_path)
+        cleanup_upload(rendered_upload_path("lcd", filename))
+        cleanup_upload(rendered_upload_path("eink", filename))
+        cleanup_upload(thumb_upload_path(filename))
         flash("That file could not be processed. Upload a valid PNG, JPG, JPEG, or PDF under 5MB.", "error")
         return redirect("/")
 
@@ -1089,17 +1277,29 @@ def delete():
         flash("Choose a file to delete.", "error")
         return redirect("/")
 
-    p = os.path.join(UPLOAD_FOLDER, f)
+    catalog = get_media_catalog()
+    original = (catalog.get(f) or {}).get("original")
+    paths = [
+        normalised_upload_path(f),
+        rendered_upload_path("lcd", f),
+        rendered_upload_path("eink", f),
+        thumb_upload_path(f),
+        legacy_upload_path(f),
+        legacy_upload_path(f"{f}.png"),
+    ]
+    if original:
+        paths.append(original_upload_path(original))
+
     removed = False
 
-    if os.path.exists(p):
-        os.remove(p)
-        removed = True
+    for path in paths:
+        if os.path.exists(path):
+            os.remove(path)
+            removed = True
 
-    thumb = p + ".png"
-    if os.path.exists(thumb):
-        os.remove(thumb)
-        removed = True
+    if f in catalog:
+        catalog.pop(f)
+        save_media_catalog(catalog)
 
     cleared = clear_file_references(f)
 
@@ -1118,15 +1318,18 @@ def config(device_id):
     state = get_display()
     device = effective_device(get_device(device_id))
     timestamp = state.get("timestamp")
+    for screen in ("lcd", "eink"):
+        if state.get(screen):
+            ensure_rendered_derivatives(state.get(screen), device, force=True)
 
     return jsonify({
         "lcd": {
             "file": state.get("lcd"),
-            "url": rendered_upload_url(device_id, "lcd", state.get("lcd"), timestamp)
+            "url": prepared_upload_url("lcd", state.get("lcd"))
         },
         "eink": {
             "file": state.get("eink"),
-            "url": rendered_upload_url(device_id, "eink", state.get("eink"), timestamp)
+            "url": prepared_upload_url("eink", state.get("eink"))
         },
         "timestamp": timestamp,
         "device": device

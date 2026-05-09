@@ -288,28 +288,90 @@ button:hover { filter:brightness(0.97); }
 }
 
 .modal-content {
-    display:flex;
-    gap:40px;
     background:#171c26;
+    border:1px solid #2a3344;
     padding:20px;
-    border-radius:12px;
+    border-radius:8px;
     color:#eef3fb;
+    max-height:88vh;
+    max-width:min(920px, 92vw);
+    overflow:auto;
+    width:100%;
 }
 
-.preview {
-    text-align:center;
+.preview-header {
+    align-items:center;
+    display:flex;
+    gap:12px;
+    justify-content:space-between;
+    margin-bottom:14px;
 }
 
-.preview img {
-    width:320px;
-    height:192px;
+.preview-title {
+    color:#f4f7fb;
+    font-size:14px;
+    font-weight:700;
+    min-width:0;
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+}
+
+.preview-tabs {
+    display:grid;
+    gap:8px;
+    grid-template-columns:repeat(4, minmax(0, 1fr));
+    margin-bottom:14px;
+}
+
+.preview-tab {
+    background:#273143;
+    color:#dbe4f3;
+    margin:0;
+}
+
+.preview-tab.active {
+    background:#c7ddff;
+    color:#17345c;
+}
+
+.preview-panel {
+    display:none;
+}
+
+.preview-panel.active {
+    display:block;
+}
+
+.preview-panel h3 {
+    color:#b8c4d6;
+    font-size:12px;
+    margin:0 0 8px;
+    text-transform:uppercase;
+}
+
+.preview-frame {
+    align-items:center;
+    background:#0c1018;
+    border:1px solid #273143;
+    border-radius:8px;
+    display:flex;
+    justify-content:center;
+    min-height:260px;
+    overflow:hidden;
+}
+
+.preview-frame img,
+.preview-frame object {
+    display:block;
+    max-height:70vh;
+    max-width:100%;
     object-fit:contain;
-    border-radius:6px;
 }
 
-/* E-Ink simulation */
-.eink-preview img {
-    filter:grayscale(100%) contrast(1.3);
+.preview-frame object {
+    height:520px;
+    width:100%;
 }
 
 @media (max-width: 820px) {
@@ -337,6 +399,10 @@ button:hover { filter:brightness(0.97); }
 
     .grid {
         grid-template-columns:repeat(auto-fill,minmax(124px,1fr));
+    }
+
+    .preview-tabs {
+        grid-template-columns:repeat(2, minmax(0, 1fr));
     }
 }
 </style>
@@ -407,9 +473,14 @@ button:hover { filter:brightness(0.97); }
 <div class="badge stage-eink">STAGED E-INK</div>
 {% endif %}
 
-<img src="/static/uploads/{{f}}.png?v={{file.version}}"
-     onerror="this.src='/static/uploads/{{f}}?v={{file.version}}'"
-     onclick="openPreview('/static/uploads/{{f}}?v={{file.version}}')">
+<img src="{{ file.thumb_url }}"
+     onerror="this.src='{{ file.normalised_url }}'"
+     onclick="openPreview(this)"
+     data-filename="{{ f }}"
+     data-original="{{ file.original_url }}"
+     data-normalised="{{ file.normalised_url }}"
+     data-lcd="{{ file.lcd_url }}"
+     data-eink="{{ file.eink_url }}">
 
 <span class="enlarge-hint">click to enlarge</span>
 <p title="{{f}}">{{f}}</p>
@@ -460,25 +531,75 @@ button:hover { filter:brightness(0.97); }
 <!-- MODAL -->
 <div class="modal" id="previewModal" onclick="closePreview()">
     <div class="modal-content" onclick="event.stopPropagation()">
-
-        <div class="preview">
-            <h3>LCD Preview</h3>
-            <img id="lcdPreview">
+        <div class="preview-header">
+            <div class="preview-title" id="previewTitle"></div>
+            <button class="preview-tab" type="button" onclick="closePreview()">Close</button>
         </div>
 
-        <div class="preview eink-preview">
-            <h3>E-Ink Preview</h3>
-            <img id="einkPreview">
+        <div class="preview-tabs">
+            <button class="preview-tab active" type="button" data-preview-tab="original" onclick="showPreviewTab('original')">Original</button>
+            <button class="preview-tab" type="button" data-preview-tab="normalised" onclick="showPreviewTab('normalised')">Normalised</button>
+            <button class="preview-tab" type="button" data-preview-tab="lcd" onclick="showPreviewTab('lcd')">LCD Render</button>
+            <button class="preview-tab" type="button" data-preview-tab="eink" onclick="showPreviewTab('eink')">E-Ink Render</button>
+        </div>
+
+        <div class="preview-panel active" data-preview-panel="original">
+            <h3>Original upload</h3>
+            <div class="preview-frame" id="originalPreviewFrame"></div>
+        </div>
+
+        <div class="preview-panel" data-preview-panel="normalised">
+            <h3>Normalised master</h3>
+            <div class="preview-frame"><img id="normalisedPreview"></div>
+        </div>
+
+        <div class="preview-panel" data-preview-panel="lcd">
+            <h3>LCD prepared file</h3>
+            <div class="preview-frame"><img id="lcdPreview"></div>
+        </div>
+
+        <div class="preview-panel" data-preview-panel="eink">
+            <h3>E-ink prepared file</h3>
+            <div class="preview-frame"><img id="einkPreview"></div>
         </div>
 
     </div>
 </div>
 
 <script>
-function openPreview(src) {
+function showPreviewTab(name) {
+    document.querySelectorAll("[data-preview-tab]").forEach(function (tab) {
+        tab.classList.toggle("active", tab.dataset.previewTab === name);
+    });
+    document.querySelectorAll("[data-preview-panel]").forEach(function (panel) {
+        panel.classList.toggle("active", panel.dataset.previewPanel === name);
+    });
+}
+
+function setOriginalPreview(src) {
+    const frame = document.getElementById("originalPreviewFrame");
+    frame.innerHTML = "";
+    if (src.toLowerCase().split("?")[0].endsWith(".pdf")) {
+        const object = document.createElement("object");
+        object.data = src;
+        object.type = "application/pdf";
+        frame.appendChild(object);
+        return;
+    }
+
+    const img = document.createElement("img");
+    img.src = src;
+    frame.appendChild(img);
+}
+
+function openPreview(trigger) {
     document.getElementById("previewModal").style.display = "flex";
-    document.getElementById("lcdPreview").src = src;
-    document.getElementById("einkPreview").src = src;
+    document.getElementById("previewTitle").textContent = trigger.dataset.filename;
+    setOriginalPreview(trigger.dataset.original);
+    document.getElementById("normalisedPreview").src = trigger.dataset.normalised;
+    document.getElementById("lcdPreview").src = trigger.dataset.lcd;
+    document.getElementById("einkPreview").src = trigger.dataset.eink;
+    showPreviewTab("original");
 }
 
 function closePreview() {
