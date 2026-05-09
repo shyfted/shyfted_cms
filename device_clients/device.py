@@ -2,6 +2,7 @@ import os
 import time
 import socket
 import subprocess
+import importlib
 
 import requests
 from PIL import Image
@@ -55,6 +56,10 @@ DEVICE_SPEC = {
 }
 
 
+def log(*parts):
+    print(*parts, flush=True)
+
+
 def absolute_url(url):
     if not url:
         return None
@@ -74,7 +79,7 @@ def send_heartbeat():
         )
         response.raise_for_status()
     except Exception as e:
-        print("[HEARTBEAT ERROR]", e)
+        log("[HEARTBEAT ERROR]", e)
 
 
 def poll_config():
@@ -87,18 +92,31 @@ def image_key(screen_data, timestamp):
     return f"{screen_data.get('file')}:{screen_data.get('url')}:{timestamp}"
 
 
-def download(url, target_path):
+def download(url, target_path, label=None):
+    source_url = absolute_url(url)
+    if label:
+        log(f"[{label} DOWNLOAD] url={source_url}")
+        log(f"[{label} DOWNLOAD] save_path={target_path}")
+
     try:
-        response = requests.get(absolute_url(url), timeout=REQUEST_TIMEOUT)
+        response = requests.get(source_url, timeout=REQUEST_TIMEOUT)
         response.raise_for_status()
 
         with open(target_path, "wb") as f:
             f.write(response.content)
 
+        if label:
+            log(
+                f"[{label} DOWNLOAD] success bytes={len(response.content)} "
+                f"content_type={response.headers.get('content-type')}"
+            )
         return target_path
 
     except Exception as e:
-        print("[DOWNLOAD ERROR]", e)
+        if label:
+            log(f"[{label} DOWNLOAD] failure", e)
+        else:
+            log("[DOWNLOAD ERROR]", e)
         return None
 
 
@@ -132,24 +150,43 @@ def show_lcd(path):
     )
 
 
-def show_eink(path):
-    from waveshare_epd import epd7in5_V2
+def show_eink(path, screen_config=None):
+    screen_config = screen_config or {}
+    driver = screen_config.get("driver") or DEVICE_SPEC["screens"]["eink"]["driver"]
 
-    epd = epd7in5_V2.EPD()
+    log(f"[EINK INIT] importing {driver}")
+    epd_driver = importlib.import_module(driver)
+
+    log("[EINK INIT] creating Waveshare EPD instance")
+    epd = epd_driver.EPD()
+    log("[EINK INIT] initialising Waveshare e-ink hardware")
     epd.init()
+    log(
+        "[EINK INIT] ready "
+        f"driver={driver} width={getattr(epd, 'width', EINK_SIZE[0])} "
+        f"height={getattr(epd, 'height', EINK_SIZE[1])}"
+    )
 
     img = Image.open(path)
+    target_size = (
+        int(getattr(epd, "width", EINK_SIZE[0])),
+        int(getattr(epd, "height", EINK_SIZE[1])),
+    )
+    log(f"[EINK REFRESH] loaded image path={path} mode={img.mode} size={img.size}")
 
-    if img.size != EINK_SIZE:
-        img = img.resize(EINK_SIZE)
+    if img.size != target_size:
+        log(f"[EINK REFRESH] resizing image from {img.size} to {target_size}")
+        img = img.resize(target_size)
 
     img = img.convert("1")
 
+    log("[EINK REFRESH] physical refresh start")
     epd.display(epd.getbuffer(img))
     epd.sleep()
+    log("[EINK REFRESH] physical refresh complete")
 
 
-print(f"Device running against {CMS} as {DEVICE_ID}...")
+log(f"Device running against {CMS} as {DEVICE_ID}...")
 send_heartbeat()
 
 last_heartbeat = time.time()
@@ -164,6 +201,14 @@ while True:
 
         data = poll_config()
         timestamp = data.get("timestamp")
+        device = data.get("device") or {}
+        screens = device.get("screens") or DEVICE_SPEC["screens"]
+        log(
+            "[CONFIG] received "
+            f"timestamp={timestamp} "
+            f"lcd_file={(data.get('lcd') or {}).get('file')} "
+            f"eink_file={(data.get('eink') or {}).get('file')}"
+        )
 
         lcd = data.get("lcd", {})
         lcd_file = lcd.get("file")
@@ -180,20 +225,24 @@ while True:
         eink_file = eink.get("file")
         eink_url = eink.get("url")
         eink_key = image_key(eink, timestamp)
+        log(f"[EINK] selected_url={absolute_url(eink_url)} file={eink_file}")
 
         if eink_file and eink_url and eink_key != eink_current_key:
-            path = download(eink_url, EINK_RENDERED)
+            path = download(eink_url, EINK_RENDERED, "EINK")
             if path:
-                show_eink(path)
-                eink_current_key = eink_key
+                try:
+                    show_eink(path, screens.get("eink"))
+                    eink_current_key = eink_key
+                except Exception as e:
+                    log("[EINK REFRESH] physical refresh failure", e)
 
         time.sleep(POLL_SECONDS)
 
     except KeyboardInterrupt:
         stop_lcd()
-        print("Device stopped.")
+        log("Device stopped.")
         break
 
     except Exception as e:
-        print("[LOOP ERROR]", e)
+        log("[LOOP ERROR]", e)
         time.sleep(POLL_SECONDS)

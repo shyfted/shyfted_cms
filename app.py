@@ -502,13 +502,14 @@ def screen_config(device, screen):
     screens = (device or {}).get("screens") or {}
     config = screens.get(screen) or {}
     defaults = {
-        "lcd": {"width": 800, "height": 480, "type": "lcd", "color": True},
-        "eink": {"width": 800, "height": 480, "type": "eink", "color": False},
+        "lcd": {"width": 800, "height": 480, "type": "lcd", "color": True, "rotation": 0},
+        "eink": {"width": 800, "height": 480, "type": "eink", "color": False, "rotation": 0},
     }
 
     merged = {**defaults.get(screen, {}), **config}
     merged["width"] = int(merged.get("width") or 800)
     merged["height"] = int(merged.get("height") or 480)
+    merged["rotation"] = int(merged.get("rotation") or 0) % 360
     return merged
 
 
@@ -534,10 +535,12 @@ def render_for_screen(filename, screen, device):
     source_path = os.path.join(UPLOAD_FOLDER, filename)
 
     if screen == "eink" or config.get("type") == "eink":
-        rotated_size = (size[1], size[0])
-        rendered = fit_to_screen(source_path, rotated_size, (255, 255, 255))
-        rendered = rendered.rotate(90, expand=True)
-        rendered = rendered.convert("L").convert("1")
+        rotation = config["rotation"]
+        fit_size = size if rotation in (0, 180) else (size[1], size[0])
+        rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
+        if rotation:
+            rendered = rendered.rotate(rotation, expand=True)
+        rendered = rendered.convert("L").convert("1", dither=Image.Dither.FLOYDSTEINBERG)
         output = BytesIO()
         rendered.save(output, "PNG")
         output.seek(0)
