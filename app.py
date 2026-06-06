@@ -778,6 +778,39 @@ def set_display(data):
     save_json("display.json", data)
 
 
+def get_device_assignments():
+    return load_json("device_assignments.json", {})
+
+
+def save_device_assignments(assignments):
+    save_json("device_assignments.json", assignments)
+
+
+def get_device_display(device_id):
+    return get_device_assignments().get(device_id, {})
+
+
+def effective_display(device_id):
+    state = get_display()
+    device_state = get_device_display(device_id)
+
+    return {
+        **state,
+        **{screen: device_state.get(screen) for screen in ("lcd", "eink") if screen in device_state},
+        "timestamp": device_state.get("timestamp") or state.get("timestamp"),
+    }
+
+
+def set_device_screen(device_id, screen, filename):
+    assignments = get_device_assignments()
+    device_state = assignments.get(device_id, {})
+    device_state[screen] = filename
+    device_state["timestamp"] = datetime.now().isoformat()
+    assignments[device_id] = device_state
+    save_device_assignments(assignments)
+    return device_state
+
+
 # ===== STAGING =====
 def get_staging():
     return load_json("staging.json", {"lcd": None, "eink": None})
@@ -837,6 +870,19 @@ def clear_file_references(filename):
 
     if staging_changed:
         save_json("staging.json", staging)
+
+    assignments = get_device_assignments()
+    assignments_changed = False
+    for device_id, device_state in assignments.items():
+        for screen in ("lcd", "eink"):
+            if device_state.get(screen) == filename:
+                device_state[screen] = None
+                device_state["timestamp"] = datetime.now().isoformat()
+                assignments_changed = True
+                cleared.append(f"{device_id} {screen.upper()}")
+
+    if assignments_changed:
+        save_device_assignments(assignments)
 
     return cleared
 
@@ -1033,7 +1079,8 @@ def index():
         files=files,
         live=get_display(),
         staging=get_staging(),
-        devices=get_devices()
+        devices=get_devices(),
+        device_assignments=get_device_assignments(),
     )
 
 
@@ -1258,6 +1305,42 @@ def push_live():
     return redirect("/")
 
 
+@app.route("/assign_device_screen", methods=["POST"])
+@login_required
+def assign_device_screen():
+    validate_csrf()
+    device_id = (request.form.get("device_id") or "").strip()
+    screen = (request.form.get("screen") or "").strip()
+    filename = clean_filename(request.form.get("file"))
+
+    if screen not in ("lcd", "eink"):
+        flash("Choose LCD or E-Ink for the device assignment.", "error")
+        return redirect("/")
+
+    device = get_device(device_id)
+    if not device:
+        flash(f"Device {device_id} has not reported in yet.", "error")
+        return redirect("/")
+
+    screens = (device.get("screens") or {})
+    if screen not in screens:
+        flash(f"{device.get('name') or device_id} does not report a {screen.upper()} screen.", "error")
+        return redirect("/")
+
+    if not filename:
+        flash("Choose a file to assign.", "error")
+        return redirect("/")
+
+    if not upload_exists(filename):
+        flash(f"Cannot assign {filename}; that upload no longer exists.", "error")
+        return redirect("/")
+
+    set_device_screen(device_id, screen, filename)
+    print(f"[ASSIGN DEVICE] device={device_id} screen={screen} file={filename}")
+    flash(f"Assigned {filename} to {device.get('name') or device_id} {screen.upper()}.", "success")
+    return redirect("/")
+
+
 @app.route("/delete", methods=["POST"])
 @login_required
 def delete():
@@ -1341,7 +1424,7 @@ def preview_upload(variant, filename):
 
 @app.route("/device/<device_id>/config")
 def config(device_id):
-    state = get_display()
+    state = effective_display(device_id)
     device = effective_device(get_device(device_id))
     timestamp = state.get("timestamp")
     lcd_content_id = screen_content_id(state.get("lcd"), "lcd", device)
