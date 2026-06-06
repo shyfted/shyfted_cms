@@ -1,8 +1,8 @@
 # Shyfted Client Android
 
-Android-native Shyfted device client v0.1.
+Android-native Shyfted device client.
 
-This is the Android equivalent starting point for `device_clients/device.py`. The current release is intentionally a full-screen WebView shell that loads the existing CMS at `https://cms.shyfted.com.au`. The source also includes small endpoint/device-spec classes so heartbeat, config polling, media download, caching, and renderer-specific behavior can be added without reshaping the app later.
+This is the Android equivalent starting point for `device_clients/device.py`. The current release is a branded Shyfted device shell that loads the configured CMS URL in a full-screen WebView. The source also includes small endpoint/device-spec classes so heartbeat, config polling, media download, caching, and renderer-specific behavior can be added without reshaping the app later.
 
 ## Requirements
 
@@ -12,6 +12,50 @@ This is the Android equivalent starting point for `device_clients/device.py`. Th
 - Android 11 device with ADB over Wi-Fi enabled
 
 No Google Play Services, Chrome, or external browser dependency is used.
+
+## Phase 0 Device Configuration
+
+First-boot defaults:
+
+```properties
+device.name=Petey
+device.id=petey_001
+cms.url=https://cms.shyfted.com.au
+```
+
+Runtime configuration is loaded in this order:
+
+1. Built-in first-boot defaults
+2. App preferences, reserved for a future settings/MDM surface
+3. External app-specific properties file
+4. ADB launch extras
+
+The external configuration file path on device is:
+
+```bash
+/sdcard/Android/data/au.com.shyfted.client/files/shyfted-client.properties
+```
+
+Create or replace it over ADB:
+
+```bash
+adb shell 'mkdir -p /sdcard/Android/data/au.com.shyfted.client/files'
+adb shell 'cat > /sdcard/Android/data/au.com.shyfted.client/files/shyfted-client.properties <<EOF
+device.name=Petey
+device.id=petey_001
+cms.url=https://cms.shyfted.com.au
+EOF'
+```
+
+One-off launch overrides are also supported:
+
+```bash
+adb shell am start \
+  -n au.com.shyfted.client/.MainActivity \
+  --es device.name Petey \
+  --es device.id petey_001 \
+  --es cms.url https://cms.shyfted.com.au
+```
 
 ## Build In Android Studio
 
@@ -72,12 +116,15 @@ adb logcat | grep -i shyfted
 
 - Package name: `au.com.shyfted.client`
 - App name: `Shyfted Client`
+- Shyfted avatar launcher icon
+- Shyfted branded splash/loading and offline screens
+- External configuration for device name, device ID, and CMS URL
 - Full-screen native Android WebView
-- Loads `https://cms.shyfted.com.au` on launch
+- Loads the configured CMS URL on launch
 - JavaScript enabled
 - DOM storage enabled
 - Screen kept awake
-- Built-in connection error page with a retry button
+- Built-in Shyfted offline page with a reconnect button
 
 ## CMS Device Contract Reviewed
 

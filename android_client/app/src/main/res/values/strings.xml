@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Shyfted Client</string>
-    <string name="cms_url">https://cms.shyfted.com.au</string>
+    <string name="tagline">Retail has Shyfted</string>
+    <string name="loading_title">Connecting to Shyfted</string>
+    <string name="loading_message">Preparing Petey for retail display.</string>
+    <string name="offline_title">Shyfted is offline</string>
+    <string name="offline_message">Petey cannot reach the CMS right now.</string>
+    <string name="retry_label">Reconnect</string>
 </resources>

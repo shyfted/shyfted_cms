@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="shyfted_black">#05070B</color>
+    <color name="shyfted_panel">#10131A</color>
+    <color name="shyfted_blue">#4C8CE4</color>
+    <color name="shyfted_yellow">#F8DE22</color>
+    <color name="shyfted_text">#F6F7FB</color>
+    <color name="shyfted_muted">#D7DEEA</color>
+</resources>

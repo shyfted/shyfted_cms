@@ -6,7 +6,8 @@
 
     <application
         android:allowBackup="false"
-        android:icon="@drawable/ic_launcher"
+        android:icon="@drawable/shyfted_avatar"
+        android:roundIcon="@drawable/shyfted_avatar"
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"

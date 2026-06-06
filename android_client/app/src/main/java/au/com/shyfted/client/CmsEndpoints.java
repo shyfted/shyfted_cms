@@ -1,8 +1,6 @@
 package au.com.shyfted.client;
 
 final class CmsEndpoints {
-    static final String DEFAULT_CMS_URL = "https://cms.shyfted.com.au";
-
     private final String cmsBaseUrl;
     private final String deviceId;
 
@@ -25,7 +23,7 @@ final class CmsEndpoints {
 
     private static String trimTrailingSlash(String value) {
         if (value == null || value.length() == 0) {
-            return DEFAULT_CMS_URL;
+            return DeviceConfig.DEFAULT_CMS_URL;
         }
 
         while (value.endsWith("/")) {

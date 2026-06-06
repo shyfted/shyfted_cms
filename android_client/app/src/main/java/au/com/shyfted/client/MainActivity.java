@@ -5,6 +5,8 @@ import android.app.Activity;
 import android.graphics.Color;
 import android.net.http.SslError;
 import android.os.Bundle;
+import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
 import android.view.Window;
@@ -18,13 +20,23 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
 public final class MainActivity extends Activity {
+    private static final int COLOR_BLACK = Color.rgb(5, 7, 11);
+    private static final int COLOR_BLUE = Color.rgb(76, 140, 228);
+    private static final int COLOR_YELLOW = Color.rgb(248, 222, 34);
+    private static final int COLOR_TEXT = Color.rgb(246, 247, 251);
+    private static final int COLOR_MUTED = Color.rgb(215, 222, 234);
+
     private WebView webView;
+    private View splashView;
     private View errorView;
     private CmsEndpoints endpoints;
+    private DeviceConfig deviceConfig;
+    private ShyftedDeviceClient deviceClient;
     private boolean mainFrameLoadFailed;
 
     @Override
@@ -35,19 +47,37 @@ public final class MainActivity extends Activity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN);
 
-        endpoints = new CmsEndpoints(
-                getString(R.string.cms_url),
-                DeviceSpec.DEFAULT_DEVICE_ID
+        deviceConfig = DeviceConfig.load(this, getIntent());
+        endpoints = new CmsEndpoints(deviceConfig.cmsUrl, deviceConfig.deviceId);
+        DisplayMetrics displayMetrics = currentDisplayMetrics();
+        deviceClient = new ShyftedDeviceClient(
+                endpoints,
+                DeviceSpec.peteyLcdDevice(deviceConfig, displayMetrics.widthPixels, displayMetrics.heightPixels)
         );
+        Log.i(ShyftedDeviceClient.TAG, "Loaded device config source=" + deviceConfig.source
+                + " deviceName=" + deviceConfig.deviceName
+                + " deviceId=" + deviceConfig.deviceId
+                + " cmsUrl=" + deviceConfig.cmsUrl
+                + " display=" + displayMetrics.widthPixels + "x" + displayMetrics.heightPixels);
 
         FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.WHITE);
+        root.setBackgroundColor(COLOR_BLACK);
 
         webView = createWebView();
+        splashView = createStatusView(
+                getString(R.string.loading_title),
+                getString(R.string.loading_message),
+                deviceConfig.deviceName,
+                false
+        );
         errorView = createErrorView();
         errorView.setVisibility(View.GONE);
 
         root.addView(webView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+        root.addView(splashView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
         ));
@@ -58,6 +88,7 @@ public final class MainActivity extends Activity {
 
         setContentView(root);
         enterFullScreen();
+        deviceClient.start();
         webView.loadUrl(endpoints.launchUrl());
     }
 
@@ -80,6 +111,10 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (deviceClient != null) {
+            deviceClient.stop();
+            deviceClient = null;
+        }
         if (webView != null) {
             webView.destroy();
             webView = null;
@@ -100,7 +135,8 @@ public final class MainActivity extends Activity {
     @SuppressLint("SetJavaScriptEnabled")
     private WebView createWebView() {
         WebView view = new WebView(this);
-        view.setBackgroundColor(Color.WHITE);
+        view.setBackgroundColor(COLOR_BLACK);
+        view.setVisibility(View.GONE);
 
         WebSettings settings = view.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -154,29 +190,61 @@ public final class MainActivity extends Activity {
     }
 
     private View createErrorView() {
+        return createStatusView(
+                getString(R.string.offline_title),
+                getString(R.string.offline_message),
+                deviceConfig.deviceName + " - " + deviceConfig.deviceId,
+                true
+        );
+    }
+
+    private View createStatusView(String titleText, String messageText, String detailText, boolean includeRetry) {
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
         layout.setGravity(Gravity.CENTER);
         layout.setPadding(48, 48, 48, 48);
-        layout.setBackgroundColor(Color.rgb(16, 19, 26));
+        layout.setBackgroundColor(COLOR_BLACK);
+
+        ImageView logo = new ImageView(this);
+        logo.setImageResource(R.drawable.shyfted_avatar);
+        logo.setAdjustViewBounds(true);
+        logo.setContentDescription("Shyfted");
+
+        TextView tagline = new TextView(this);
+        tagline.setText(getString(R.string.tagline));
+        tagline.setTextColor(COLOR_YELLOW);
+        tagline.setTextSize(14);
+        tagline.setGravity(Gravity.CENTER);
+        tagline.setPadding(0, 26, 0, 12);
 
         TextView title = new TextView(this);
-        title.setText("Connection unavailable");
-        title.setTextColor(Color.WHITE);
+        title.setText(titleText);
+        title.setTextColor(COLOR_TEXT);
         title.setTextSize(24);
         title.setGravity(Gravity.CENTER);
 
         TextView message = new TextView(this);
-        message.setText("Shyfted Client could not reach the CMS.");
-        message.setTextColor(Color.rgb(215, 222, 234));
+        message.setText(messageText);
+        message.setTextColor(COLOR_MUTED);
         message.setTextSize(16);
         message.setGravity(Gravity.CENTER);
-        message.setPadding(0, 18, 0, 28);
+        message.setPadding(0, 14, 0, 14);
 
-        Button retry = new Button(this);
-        retry.setText("Retry");
-        retry.setAllCaps(false);
-        retry.setOnClickListener(v -> retryLoad());
+        TextView detail = new TextView(this);
+        detail.setText(detailText + "\n" + deviceConfig.cmsUrl);
+        detail.setTextColor(Color.rgb(150, 160, 178));
+        detail.setTextSize(12);
+        detail.setGravity(Gravity.CENTER);
+        detail.setPadding(0, 0, 0, includeRetry ? 28 : 0);
+
+        layout.addView(logo, new LinearLayout.LayoutParams(
+                dp(132),
+                dp(132)
+        ));
+        layout.addView(tagline, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
 
         layout.addView(title, new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
@@ -186,10 +254,24 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
-        layout.addView(retry, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
+        layout.addView(detail, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
+
+        if (includeRetry) {
+            Button retry = new Button(this);
+            retry.setText(getString(R.string.retry_label));
+            retry.setAllCaps(false);
+            retry.setTextColor(COLOR_TEXT);
+            retry.setBackgroundColor(COLOR_BLUE);
+            retry.setOnClickListener(v -> retryLoad());
+
+            layout.addView(retry, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+            ));
+        }
 
         return layout;
     }
@@ -202,6 +284,7 @@ public final class MainActivity extends Activity {
 
     private void showWebView() {
         webView.setVisibility(View.VISIBLE);
+        splashView.setVisibility(View.GONE);
         errorView.setVisibility(View.GONE);
         enterFullScreen();
     }
@@ -209,8 +292,20 @@ public final class MainActivity extends Activity {
     private void showErrorView() {
         mainFrameLoadFailed = true;
         webView.setVisibility(View.GONE);
+        splashView.setVisibility(View.GONE);
         errorView.setVisibility(View.VISIBLE);
         enterFullScreen();
+    }
+
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    @SuppressWarnings("deprecation")
+    private DisplayMetrics currentDisplayMetrics() {
+        DisplayMetrics metrics = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getRealMetrics(metrics);
+        return metrics;
     }
 
     private void enterFullScreen() {
