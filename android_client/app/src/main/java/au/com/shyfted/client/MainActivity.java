@@ -40,6 +40,7 @@ public final class MainActivity extends Activity {
     private CmsEndpoints endpoints;
     private DeviceConfig deviceConfig;
     private ShyftedDeviceClient deviceClient;
+    private PeteyEinkServiceProbe peteyEinkServiceProbe;
     private boolean mainFrameLoadFailed;
 
     @Override
@@ -59,6 +60,7 @@ public final class MainActivity extends Activity {
                 DeviceSpec.peteyLcdDevice(deviceConfig, displayMetrics.widthPixels, displayMetrics.heightPixels),
                 this::showLcdContent
         );
+        peteyEinkServiceProbe = new PeteyEinkServiceProbe(this);
         Log.i(ShyftedDeviceClient.TAG, "Loaded device config source=" + deviceConfig.source
                 + " deviceName=" + deviceConfig.deviceName
                 + " deviceId=" + deviceConfig.deviceId
@@ -99,6 +101,7 @@ public final class MainActivity extends Activity {
         setContentView(root);
         enterFullScreen();
         showLastGoodLcdContent();
+        peteyEinkServiceProbe.start();
         deviceClient.start();
     }
 
@@ -124,6 +127,10 @@ public final class MainActivity extends Activity {
         if (deviceClient != null) {
             deviceClient.stop();
             deviceClient = null;
+        }
+        if (peteyEinkServiceProbe != null) {
+            peteyEinkServiceProbe.stop();
+            peteyEinkServiceProbe = null;
         }
         if (webView != null) {
             webView.destroy();
