@@ -24,6 +24,8 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import java.io.File;
+
 public final class MainActivity extends Activity {
     private static final int COLOR_BLACK = Color.rgb(5, 7, 11);
     private static final int COLOR_BLUE = Color.rgb(76, 140, 228);
@@ -32,6 +34,7 @@ public final class MainActivity extends Activity {
     private static final int COLOR_MUTED = Color.rgb(215, 222, 234);
 
     private WebView webView;
+    private ImageView lcdImageView;
     private View splashView;
     private View errorView;
     private CmsEndpoints endpoints;
@@ -51,8 +54,10 @@ public final class MainActivity extends Activity {
         endpoints = new CmsEndpoints(deviceConfig.cmsUrl, deviceConfig.deviceId);
         DisplayMetrics displayMetrics = currentDisplayMetrics();
         deviceClient = new ShyftedDeviceClient(
+                this,
                 endpoints,
-                DeviceSpec.peteyLcdDevice(deviceConfig, displayMetrics.widthPixels, displayMetrics.heightPixels)
+                DeviceSpec.peteyLcdDevice(deviceConfig, displayMetrics.widthPixels, displayMetrics.heightPixels),
+                this::showLcdContent
         );
         Log.i(ShyftedDeviceClient.TAG, "Loaded device config source=" + deviceConfig.source
                 + " deviceName=" + deviceConfig.deviceName
@@ -63,6 +68,7 @@ public final class MainActivity extends Activity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(COLOR_BLACK);
 
+        lcdImageView = createLcdImageView();
         webView = createWebView();
         splashView = createStatusView(
                 getString(R.string.loading_title),
@@ -73,6 +79,10 @@ public final class MainActivity extends Activity {
         errorView = createErrorView();
         errorView.setVisibility(View.GONE);
 
+        root.addView(lcdImageView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
         root.addView(webView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
@@ -88,8 +98,8 @@ public final class MainActivity extends Activity {
 
         setContentView(root);
         enterFullScreen();
+        showLastGoodLcdContent();
         deviceClient.start();
-        webView.loadUrl(endpoints.launchUrl());
     }
 
     @Override
@@ -130,6 +140,15 @@ public final class MainActivity extends Activity {
         }
 
         super.onBackPressed();
+    }
+
+    private ImageView createLcdImageView() {
+        ImageView view = new ImageView(this);
+        view.setBackgroundColor(COLOR_BLACK);
+        view.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        view.setAdjustViewBounds(false);
+        view.setVisibility(View.GONE);
+        return view;
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -283,6 +302,7 @@ public final class MainActivity extends Activity {
     }
 
     private void showWebView() {
+        lcdImageView.setVisibility(View.GONE);
         webView.setVisibility(View.VISIBLE);
         splashView.setVisibility(View.GONE);
         errorView.setVisibility(View.GONE);
@@ -291,9 +311,33 @@ public final class MainActivity extends Activity {
 
     private void showErrorView() {
         mainFrameLoadFailed = true;
+        lcdImageView.setVisibility(View.GONE);
         webView.setVisibility(View.GONE);
         splashView.setVisibility(View.GONE);
         errorView.setVisibility(View.VISIBLE);
+        enterFullScreen();
+    }
+
+    private void showLastGoodLcdContent() {
+        File lastGood = deviceClient.lastGoodLcdImage();
+        String contentId = deviceClient.lastGoodLcdContentId();
+        if (lastGood != null && contentId != null) {
+            updateLcdDisplay(contentId, lastGood);
+        }
+    }
+
+    private void showLcdContent(String contentId, File file) {
+        runOnUiThread(() -> updateLcdDisplay(contentId, file));
+    }
+
+    private void updateLcdDisplay(String contentId, File file) {
+        lcdImageView.setImageURI(null);
+        lcdImageView.setImageURI(android.net.Uri.fromFile(file));
+        lcdImageView.setVisibility(View.VISIBLE);
+        webView.setVisibility(View.GONE);
+        splashView.setVisibility(View.GONE);
+        errorView.setVisibility(View.GONE);
+        Log.i(ShyftedDeviceClient.TAG, "Display updated with content_id=" + contentId);
         enterFullScreen();
     }
 

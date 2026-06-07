@@ -1,5 +1,8 @@
 package au.com.shyfted.client;
 
+import java.net.URI;
+import java.net.URISyntaxException;
+
 final class CmsEndpoints {
     private final String cmsBaseUrl;
     private final String deviceId;
@@ -19,6 +22,10 @@ final class CmsEndpoints {
 
     String heartbeatUrl() {
         return cmsBaseUrl + "/device/" + deviceId + "/heartbeat";
+    }
+
+    String resolveContentUrl(String url) throws URISyntaxException {
+        return new URI(cmsBaseUrl + "/").resolve(url).toString();
     }
 
     private static String trimTrailingSlash(String value) {
