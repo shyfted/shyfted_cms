@@ -58,7 +58,8 @@ public final class MainActivity extends Activity {
                 this,
                 endpoints,
                 DeviceSpec.peteyLcdDevice(deviceConfig, displayMetrics.widthPixels, displayMetrics.heightPixels),
-                this::showLcdContent
+                this::showLcdContent,
+                this::sendEinkContent
         );
         peteyEinkServiceProbe = new PeteyEinkServiceProbe(this);
         Log.i(ShyftedDeviceClient.TAG, "Loaded device config source=" + deviceConfig.source
@@ -335,6 +336,16 @@ public final class MainActivity extends Activity {
 
     private void showLcdContent(String contentId, File file) {
         runOnUiThread(() -> updateLcdDisplay(contentId, file));
+    }
+
+    private int sendEinkContent(String contentId, File file) {
+        Log.i(ShyftedDeviceClient.TAG, "Sending e-ink content_id=" + contentId
+                + " image_path=" + file.getAbsolutePath());
+        int returnCode = peteyEinkServiceProbe.sendImage(file.getAbsolutePath());
+        Log.i(ShyftedDeviceClient.TAG, "E-ink sendImage return_code=" + returnCode
+                + " content_id=" + contentId
+                + " image_path=" + file.getAbsolutePath());
+        return returnCode;
     }
 
     private void updateLcdDisplay(String contentId, File file) {

@@ -811,6 +811,23 @@ def set_device_screen(device_id, screen, filename):
     return device_state
 
 
+def clear_device_screen(device_id, screen):
+    assignments = get_device_assignments()
+    device_state = assignments.get(device_id)
+    if not device_state or screen not in device_state:
+        return False
+
+    device_state.pop(screen, None)
+    if any(key in device_state for key in ("lcd", "eink")):
+        device_state["timestamp"] = datetime.now().isoformat()
+        assignments[device_id] = device_state
+    else:
+        assignments.pop(device_id, None)
+
+    save_device_assignments(assignments)
+    return True
+
+
 # ===== STAGING =====
 def get_staging():
     return load_json("staging.json", {"lcd": None, "eink": None})
@@ -1338,6 +1355,30 @@ def assign_device_screen():
     set_device_screen(device_id, screen, filename)
     print(f"[ASSIGN DEVICE] device={device_id} screen={screen} file={filename}")
     flash(f"Assigned {filename} to {device.get('name') or device_id} {screen.upper()}.", "success")
+    return redirect("/")
+
+
+@app.route("/clear_device_screen", methods=["POST"])
+@login_required
+def clear_device_screen_route():
+    validate_csrf()
+    device_id = (request.form.get("device_id") or "").strip()
+    screen = (request.form.get("screen") or "").strip()
+
+    if screen not in ("lcd", "eink"):
+        flash("Choose LCD or E-Ink for the device override to clear.", "error")
+        return redirect("/")
+
+    device = get_device(device_id)
+    if not device:
+        flash(f"Device {device_id} has not reported in yet.", "error")
+        return redirect("/")
+
+    if clear_device_screen(device_id, screen):
+        flash(f"Cleared {device.get('name') or device_id} {screen.upper()} override.", "success")
+    else:
+        flash(f"{device.get('name') or device_id} has no {screen.upper()} override to clear.", "error")
+
     return redirect("/")
 
 

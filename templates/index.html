@@ -197,6 +197,18 @@ h1 {
     margin-top:8px;
 }
 
+.device-meta div + div {
+    margin-top:4px;
+}
+
+.device-meta strong {
+    color:#cbd5e1;
+}
+
+.device-meta .source {
+    color:#7f8da1;
+}
+
 .device-assignment {
     display:grid;
     gap:8px;
@@ -216,6 +228,13 @@ h1 {
     display:grid;
     gap:8px;
     grid-template-columns:1fr 1fr;
+}
+
+.device-clear {
+    display:grid;
+    gap:8px;
+    grid-template-columns:1fr 1fr;
+    margin-top:8px;
 }
 
 .empty {
@@ -296,6 +315,7 @@ button {
 .lcd { background:#bfd7ff; }
 .eink { background:#bfead7; }
 .del { background:#f5bec6; color:#7f1d1d; }
+.clear { background:#30384a; color:#dbe4f3; }
 
 button:hover { filter:brightness(0.97); }
 
@@ -552,7 +572,14 @@ button:hover { filter:brightness(0.97); }
 <span class="device-id">{{ device_id }}</span>
 </div>
 {% set assignment = device_assignments.get(device_id, {}) %}
-<div class="device-meta">LCD: {{ assignment.get("lcd") or live.lcd or "none" }}</div>
+{% set lcd_has_override = "lcd" in assignment %}
+{% set eink_has_override = "eink" in assignment %}
+{% set effective_lcd = assignment.get("lcd") if lcd_has_override else live.lcd %}
+{% set effective_eink = assignment.get("eink") if eink_has_override else live.eink %}
+<div class="device-meta">
+<div><strong>LCD:</strong> {{ effective_lcd or "none" }} <span class="source">({{ "override" if lcd_has_override else "live" }})</span></div>
+<div><strong>E-Ink:</strong> {{ effective_eink or "none" }} <span class="source">({{ "override" if eink_has_override else "live" }})</span></div>
+</div>
 <form class="device-assignment" action="/assign_device_screen" method="POST">
 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
 <input type="hidden" name="device_id" value="{{ device_id }}">
@@ -571,6 +598,26 @@ button:hover { filter:brightness(0.97); }
 {% endif %}
 </div>
 </form>
+{% if lcd_has_override or eink_has_override %}
+<div class="device-clear">
+{% if lcd_has_override %}
+<form action="/clear_device_screen" method="POST">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="hidden" name="device_id" value="{{ device_id }}">
+<input type="hidden" name="screen" value="lcd">
+<button class="clear">Clear LCD</button>
+</form>
+{% endif %}
+{% if eink_has_override %}
+<form action="/clear_device_screen" method="POST">
+<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<input type="hidden" name="device_id" value="{{ device_id }}">
+<input type="hidden" name="screen" value="eink">
+<button class="clear">Clear E-Ink</button>
+</form>
+{% endif %}
+</div>
+{% endif %}
 </div>
 {% endfor %}
 </div>
