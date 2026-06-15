@@ -2,8 +2,8 @@
 <resources>
     <string name="app_name">Shyfted Client</string>
     <string name="tagline">Retail has Shyfted</string>
-    <string name="loading_title">Connecting to Shyfted</string>
-    <string name="loading_message">Preparing Petey for retail display.</string>
+    <string name="loading_title">Waiting for Shyfted CMS content</string>
+    <string name="loading_message">Petey is connected and will update when content is assigned.</string>
     <string name="offline_title">Shyfted is offline</string>
     <string name="offline_message">Petey cannot reach the CMS right now.</string>
     <string name="retry_label">Reconnect</string>

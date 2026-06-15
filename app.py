@@ -955,6 +955,14 @@ def register_device(device_id, payload):
     if "client_version" in payload:
         device["client_version"] = payload.get("client_version")
 
+    battery = payload.get("battery")
+    if isinstance(battery, dict):
+        device["battery"] = {
+            "percentage": battery.get("percentage"),
+            "charging": battery.get("charging"),
+            "plugged": battery.get("plugged"),
+        }
+
     devices[device_id] = device
     save_devices(devices)
     return device

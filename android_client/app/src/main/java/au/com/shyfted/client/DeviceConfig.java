@@ -11,7 +11,7 @@ import java.util.Properties;
 
 final class DeviceConfig {
     static final String DEFAULT_DEVICE_NAME = "Petey";
-    static final String DEFAULT_DEVICE_ID = "petey_001";
+    static final String DEFAULT_DEVICE_ID = "petey";
     static final String DEFAULT_CMS_URL = "https://cms.shyfted.com.au";
 
     private static final String PREFS_NAME = "shyfted_device_config";

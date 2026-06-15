@@ -2,9 +2,17 @@ package au.com.shyfted.client;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.Color;
 import android.net.http.SslError;
+import android.os.BatteryManager;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.Gravity;
@@ -27,6 +35,11 @@ import android.widget.TextView;
 import java.io.File;
 
 public final class MainActivity extends Activity {
+    private static final String EXTRA_EPD_PROBE_CALL = "epd_probe_call";
+    private static final String EXTRA_EPD_PROBE_PATH = "epd_probe_path";
+    private static final String EXTRA_EPD_PROBE_ONLY = "epd_probe_only";
+    private static final String DEFAULT_EPD_PROBE_PATH = "/sdcard/Download/shyfted_epd_test.png";
+
     private static final int COLOR_BLACK = Color.rgb(5, 7, 11);
     private static final int COLOR_BLUE = Color.rgb(76, 140, 228);
     private static final int COLOR_YELLOW = Color.rgb(248, 222, 34);
@@ -35,6 +48,7 @@ public final class MainActivity extends Activity {
 
     private WebView webView;
     private ImageView lcdImageView;
+    private TextView batteryTextView;
     private View splashView;
     private View errorView;
     private CmsEndpoints endpoints;
@@ -42,6 +56,33 @@ public final class MainActivity extends Activity {
     private ShyftedDeviceClient deviceClient;
     private PeteyEinkServiceProbe peteyEinkServiceProbe;
     private boolean mainFrameLoadFailed;
+    private boolean batteryPulseBright = true;
+    private Integer lastBatteryPercent;
+    private Boolean lastBatteryCharging;
+    private Integer lastBatteryPlugged;
+    private boolean batteryUnavailableLogged;
+    private final Handler batteryPulseHandler = new Handler(Looper.getMainLooper());
+    private final Runnable batteryPulseRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (batteryTextView == null || batteryTextView.getVisibility() != View.VISIBLE) {
+                return;
+            }
+
+            batteryPulseBright = !batteryPulseBright;
+            batteryTextView.animate()
+                    .alpha(batteryPulseBright ? 1.0f : 0.55f)
+                    .setDuration(450)
+                    .start();
+            batteryPulseHandler.postDelayed(this, 1000);
+        }
+    };
+    private final BroadcastReceiver batteryReceiver = new BroadcastReceiver() {
+        @Override
+        public void onReceive(Context context, Intent intent) {
+            updateBatteryPercent(intent);
+        }
+    };
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,6 +114,7 @@ public final class MainActivity extends Activity {
 
         lcdImageView = createLcdImageView();
         webView = createWebView();
+        batteryTextView = createBatteryTextView();
         splashView = createStatusView(
                 getString(R.string.loading_title),
                 getString(R.string.loading_message),
@@ -98,18 +140,33 @@ public final class MainActivity extends Activity {
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
         ));
+        FrameLayout.LayoutParams batteryParams = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP | Gravity.RIGHT
+        );
+        batteryParams.setMargins(0, dp(8), dp(10), 0);
+        root.addView(batteryTextView, batteryParams);
 
         setContentView(root);
         enterFullScreen();
+        attemptEnableAndroidBatteryPercentage();
+        refreshBatteryStateOnce();
         showLastGoodLcdContent();
         peteyEinkServiceProbe.start();
-        deviceClient.start();
+        handleEpdProbeIntent(getIntent());
+        if (!isEpdProbeOnly(getIntent())) {
+            deviceClient.start();
+        } else {
+            Log.i(ShyftedDeviceClient.TAG, "EPD_VENDOR_PROBE probe-only launch: CMS client start skipped");
+        }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
         enterFullScreen();
+        registerBatteryReceiver();
         if (webView != null) {
             webView.onResume();
         }
@@ -117,6 +174,7 @@ public final class MainActivity extends Activity {
 
     @Override
     protected void onPause() {
+        unregisterBatteryReceiver();
         if (webView != null) {
             webView.onPause();
         }
@@ -155,6 +213,19 @@ public final class MainActivity extends Activity {
         view.setBackgroundColor(COLOR_BLACK);
         view.setScaleType(ImageView.ScaleType.FIT_CENTER);
         view.setAdjustViewBounds(false);
+        view.setVisibility(View.GONE);
+        return view;
+    }
+
+    private TextView createBatteryTextView() {
+        TextView view = new TextView(this);
+        view.setTextColor(Color.WHITE);
+        view.setTextSize(14);
+        view.setGravity(Gravity.CENTER);
+        view.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+        view.setBackgroundColor(Color.argb(170, 0, 0, 0));
+        view.setPadding(dp(8), dp(4), dp(8), dp(4));
+        view.setMinWidth(dp(76));
         view.setVisibility(View.GONE);
         return view;
     }
@@ -348,6 +419,26 @@ public final class MainActivity extends Activity {
         return returnCode;
     }
 
+    private void handleEpdProbeIntent(Intent intent) {
+        if (intent == null || !intent.hasExtra(EXTRA_EPD_PROBE_CALL)) {
+            return;
+        }
+
+        String call = intent.getStringExtra(EXTRA_EPD_PROBE_CALL);
+        String path = intent.getStringExtra(EXTRA_EPD_PROBE_PATH);
+        if (path == null || path.trim().isEmpty()) {
+            path = DEFAULT_EPD_PROBE_PATH;
+        }
+        Log.i(ShyftedDeviceClient.TAG, "EPD_VENDOR_PROBE requested call=" + call
+                + " path=" + path
+                + " probe_only=" + isEpdProbeOnly(intent));
+        peteyEinkServiceProbe.runVendorProbeCall(call, path);
+    }
+
+    private static boolean isEpdProbeOnly(Intent intent) {
+        return intent != null && intent.getBooleanExtra(EXTRA_EPD_PROBE_ONLY, false);
+    }
+
     private void updateLcdDisplay(String contentId, File file) {
         lcdImageView.setImageURI(null);
         lcdImageView.setImageURI(android.net.Uri.fromFile(file));
@@ -361,6 +452,150 @@ public final class MainActivity extends Activity {
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private void registerBatteryReceiver() {
+        Intent batteryStatus = registerReceiver(
+                batteryReceiver,
+                new IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        );
+        updateBatteryPercent(batteryStatus);
+    }
+
+    private void refreshBatteryStateOnce() {
+        Intent batteryStatus = registerReceiver(
+                null,
+                new IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        );
+        updateBatteryPercent(batteryStatus);
+    }
+
+    private void unregisterBatteryReceiver() {
+        stopBatteryPulse();
+        try {
+            unregisterReceiver(batteryReceiver);
+        } catch (IllegalArgumentException ignored) {
+            // Receiver was not registered.
+        }
+    }
+
+    private void updateBatteryPercent(Intent batteryStatus) {
+        if (batteryStatus == null || batteryTextView == null) {
+            logBatteryUnavailableIfChanged("battery intent unavailable");
+            hideBatteryOverlay();
+            return;
+        }
+
+        int level = batteryStatus.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+        int scale = batteryStatus.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+        int status = batteryStatus.getIntExtra(BatteryManager.EXTRA_STATUS, -1);
+        int plugged = batteryStatus.getIntExtra(BatteryManager.EXTRA_PLUGGED, -1);
+        if (level < 0 || scale <= 0 || status < 0 || plugged < 0) {
+            logBatteryUnavailableIfChanged("battery fields unavailable"
+                    + " level=" + level
+                    + " scale=" + scale
+                    + " status=" + status
+                    + " plugged=" + plugged);
+            hideBatteryOverlay();
+            return;
+        }
+
+        int percent = Math.round(level * 100f / scale);
+        boolean charging = status == BatteryManager.BATTERY_STATUS_CHARGING
+                || status == BatteryManager.BATTERY_STATUS_FULL;
+        logBatteryIfChanged(percent, charging, plugged);
+        if (deviceClient != null) {
+            deviceClient.updateBatteryState(percent, charging, plugged);
+        }
+        batteryTextView.setText(charging ? percent + "% CHG" : percent + "%");
+        batteryTextView.setVisibility(View.VISIBLE);
+
+        if (charging) {
+            startBatteryPulse();
+        } else {
+            stopBatteryPulse();
+        }
+    }
+
+    private void hideBatteryOverlay() {
+        if (batteryTextView == null) {
+            return;
+        }
+
+        stopBatteryPulse();
+        if (deviceClient != null) {
+            deviceClient.clearBatteryState();
+        }
+        batteryTextView.setVisibility(View.GONE);
+    }
+
+    private void logBatteryIfChanged(int percent, boolean charging, int plugged) {
+        boolean changed = lastBatteryPercent == null
+                || lastBatteryPercent != percent
+                || lastBatteryCharging == null
+                || lastBatteryCharging != charging
+                || lastBatteryPlugged == null
+                || lastBatteryPlugged != plugged;
+        if (!changed) {
+            return;
+        }
+
+        lastBatteryPercent = percent;
+        lastBatteryCharging = charging;
+        lastBatteryPlugged = plugged;
+        batteryUnavailableLogged = false;
+        Log.i(ShyftedDeviceClient.TAG, "Battery state changed percentage=" + percent
+                + " charging=" + charging
+                + " plugged=" + plugged);
+    }
+
+    private void logBatteryUnavailableIfChanged(String reason) {
+        if (!batteryUnavailableLogged) {
+            Log.w(ShyftedDeviceClient.TAG, "Battery state unavailable; hiding overlay reason=" + reason);
+        }
+        batteryUnavailableLogged = true;
+        lastBatteryPercent = null;
+        lastBatteryCharging = null;
+        lastBatteryPlugged = null;
+    }
+
+    private void attemptEnableAndroidBatteryPercentage() {
+        try {
+            boolean applied = Settings.System.putInt(
+                    getContentResolver(),
+                    "status_bar_show_battery_percent",
+                    1
+            );
+            Log.i(ShyftedDeviceClient.TAG, "Android system battery percentage setting attempted success=" + applied);
+        } catch (RuntimeException e) {
+            Log.i(ShyftedDeviceClient.TAG, "Android system battery percentage setting unavailable", e);
+        }
+
+        try {
+            boolean applied = Settings.Secure.putInt(
+                    getContentResolver(),
+                    "status_bar_show_battery_percent",
+                    1
+            );
+            Log.i(ShyftedDeviceClient.TAG, "Android secure battery percentage setting attempted success=" + applied);
+        } catch (RuntimeException e) {
+            Log.i(ShyftedDeviceClient.TAG, "Android secure battery percentage setting unavailable", e);
+        }
+    }
+
+    private void startBatteryPulse() {
+        batteryPulseHandler.removeCallbacks(batteryPulseRunnable);
+        batteryPulseBright = true;
+        batteryTextView.setAlpha(1.0f);
+        batteryPulseHandler.postDelayed(batteryPulseRunnable, 1000);
+    }
+
+    private void stopBatteryPulse() {
+        batteryPulseHandler.removeCallbacks(batteryPulseRunnable);
+        if (batteryTextView != null) {
+            batteryTextView.animate().cancel();
+            batteryTextView.setAlpha(1.0f);
+        }
     }
 
     @SuppressWarnings("deprecation")

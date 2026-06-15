@@ -17,14 +17,17 @@ final class DeviceSpec {
 
     static Map<String, Object> peteyLcdDevice(DeviceConfig config, int width, int height) {
         Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("device_id", config.deviceId);
         spec.put("name", config.deviceName);
+        spec.put("platform", "Android");
+        spec.put("model", "RK3566 / " + Build.MODEL);
         spec.put("hostname", Build.MODEL);
         spec.put("client_version", CLIENT_VERSION);
 
         Map<String, Object> lcd = new LinkedHashMap<>();
         lcd.put("type", "lcd");
-        lcd.put("width", PETEY_LCD_WIDTH);
-        lcd.put("height", PETEY_LCD_HEIGHT);
+        lcd.put("width", width > 0 ? width : PETEY_LCD_WIDTH);
+        lcd.put("height", height > 0 ? height : PETEY_LCD_HEIGHT);
         lcd.put("color", true);
         lcd.put("orientation", 0);
         lcd.put("rotation", 0);
