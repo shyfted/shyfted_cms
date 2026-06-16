@@ -628,9 +628,13 @@ public final class MainActivity extends Activity {
                 LinearLayout.LayoutParams.WRAP_CONTENT
         ));
 
-        Button overlaySettings = createAdminButton("Overlay settings");
-        overlaySettings.setOnClickListener(v -> openOverlaySettings());
-        layout.addView(overlaySettings);
+        Button androidSettings = createAdminButton("Open Android Settings");
+        androidSettings.setOnClickListener(v -> openAndroidSettings());
+        layout.addView(androidSettings);
+
+        Button overlayPermission = createAdminButton("Overlay permission");
+        overlayPermission.setOnClickListener(v -> openOverlaySettings());
+        layout.addView(overlayPermission);
 
         Button checkSu = createAdminButton("Check root");
         checkSu.setOnClickListener(v -> runAdminAction("Checking root", () -> {
@@ -663,6 +667,16 @@ public final class MainActivity extends Activity {
         button.setText(label);
         button.setAllCaps(false);
         return button;
+    }
+
+    private void openAndroidSettings() {
+        Intent intent = new Intent(Settings.ACTION_SETTINGS);
+        try {
+            startActivity(intent);
+        } catch (RuntimeException e) {
+            Log.w(ShyftedDeviceClient.TAG, "Android settings unavailable", e);
+            Toast.makeText(this, "Android settings unavailable on this build.", Toast.LENGTH_LONG).show();
+        }
     }
 
     private void openOverlaySettings() {
