@@ -632,6 +632,10 @@ public final class MainActivity extends Activity {
         androidSettings.setOnClickListener(v -> openAndroidSettings());
         layout.addView(androidSettings);
 
+        Button exitToAndroid = createAdminButton("Exit to Android");
+        exitToAndroid.setOnClickListener(v -> exitToAndroid());
+        layout.addView(exitToAndroid);
+
         Button overlayPermission = createAdminButton("Overlay permission");
         overlayPermission.setOnClickListener(v -> openOverlaySettings());
         layout.addView(overlayPermission);
@@ -676,6 +680,33 @@ public final class MainActivity extends Activity {
         } catch (RuntimeException e) {
             Log.w(ShyftedDeviceClient.TAG, "Android settings unavailable", e);
             Toast.makeText(this, "Android settings unavailable on this build.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void exitToAndroid() {
+        stopService(new Intent(this, BatteryOverlayService.class));
+        unregisterBatteryReceiver();
+        if (deviceClient != null) {
+            deviceClient.stop();
+        }
+        if (webView != null) {
+            webView.onPause();
+        }
+
+        Intent intent = new Intent(Settings.ACTION_SETTINGS);
+        try {
+            startActivity(intent);
+        } catch (RuntimeException e) {
+            Log.w(ShyftedDeviceClient.TAG, "Android settings unavailable during technician exit", e);
+        }
+
+        String message = "Exited to Android. Shyfted remains the HOME app and may resume when Home is pressed.";
+        Log.i(ShyftedDeviceClient.TAG, message);
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            finishAndRemoveTask();
+        } else {
+            finish();
         }
     }
 

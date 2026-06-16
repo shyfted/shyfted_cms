@@ -59,6 +59,7 @@ RENDER_RULE_VERSION = "render-v3"
 EINK_PDF_SAFE_MARGIN = 40
 EINK_PDF_RENDER_ZOOM = 4
 EINK_PDF_WHITE_THRESHOLD = 245
+EINK_PDF_CROP_PADDING = 20
 
 
 def allowed_file(filename):
@@ -716,24 +717,50 @@ def crop_pdf_content(img):
     mask = grayscale.point(lambda value: 255 if value < EINK_PDF_WHITE_THRESHOLD else 0)
     bbox = mask.getbbox()
     if not bbox:
-        return None
+        return None, None
 
     width = bbox[2] - bbox[0]
     height = bbox[3] - bbox[1]
     if width < img.width * 0.05 or height < img.height * 0.05:
-        return None
+        return None, bbox
 
-    pad = max(8, round(min(img.width, img.height) * 0.01))
     crop_box = (
-        max(0, bbox[0] - pad),
-        max(0, bbox[1] - pad),
-        min(img.width, bbox[2] + pad),
-        min(img.height, bbox[3] + pad),
+        max(0, bbox[0] - EINK_PDF_CROP_PADDING),
+        max(0, bbox[1] - EINK_PDF_CROP_PADDING),
+        min(img.width, bbox[2] + EINK_PDF_CROP_PADDING),
+        min(img.height, bbox[3] + EINK_PDF_CROP_PADDING),
     )
-    return img.crop(crop_box)
+    if crop_box[2] <= crop_box[0] or crop_box[3] <= crop_box[1]:
+        return None, bbox
+
+    return img.crop(crop_box), crop_box
 
 
-def render_eink_pdf(path, size):
+def log_eink_pdf_render(
+    render_context,
+    source_path,
+    original_dimensions,
+    crop_box,
+    cropped_dimensions,
+    final_dimensions,
+    output_path,
+    fallback_reason=None,
+):
+    print(
+        "[EINK PDF RENDER] "
+        f"context={render_context or 'unknown'} "
+        f"source_type={get_extension(source_path) or 'unknown'} "
+        f"source={source_path} "
+        f"original_rendered_dimensions={original_dimensions} "
+        f"crop_box={crop_box} "
+        f"cropped_dimensions={cropped_dimensions} "
+        f"final_output_dimensions={final_dimensions} "
+        f"output_file_path={output_path or 'in-memory'} "
+        f"fallback_reason={fallback_reason or 'none'}"
+    )
+
+
+def render_eink_pdf(path, size, render_context=None, output_path=None):
     with fitz.open(path) as doc:
         if doc.page_count < 1:
             raise ValueError("PDF has no pages")
@@ -745,10 +772,22 @@ def render_eink_pdf(path, size):
         )
         img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
-    cropped = crop_pdf_content(img)
+    original_dimensions = img.size
+    cropped, crop_box = crop_pdf_content(img)
     if cropped is None:
+        log_eink_pdf_render(
+            render_context,
+            path,
+            original_dimensions,
+            crop_box,
+            None,
+            size,
+            output_path,
+            "crop detection failed or invalid",
+        )
         return None
 
+    cropped_dimensions = cropped.size
     fit_size = (
         max(1, size[0] - (EINK_PDF_SAFE_MARGIN * 2)),
         max(1, size[1] - (EINK_PDF_SAFE_MARGIN * 2)),
@@ -763,14 +802,23 @@ def render_eink_pdf(path, size):
     x = (size[0] - grayscale.width) // 2
     y = (size[1] - grayscale.height) // 2
     canvas.paste(grayscale, (x, y))
+    log_eink_pdf_render(
+        render_context,
+        path,
+        original_dimensions,
+        crop_box,
+        cropped_dimensions,
+        canvas.size,
+        output_path,
+    )
     return canvas
 
 
-def render_for_screen(filename, screen, device):
+def render_for_screen(filename, screen, device, render_context=None, output_path=None):
     if not upload_exists(filename):
         abort(404)
 
-    rendered = render_screen_image(filename, screen, device)
+    rendered = render_screen_image(filename, screen, device, render_context, output_path)
     output = BytesIO()
     if screen == "eink":
         rendered.save(output, "PNG")
@@ -785,7 +833,7 @@ def render_for_screen(filename, screen, device):
     return output, mimetype, extension
 
 
-def render_screen_image(filename, screen, device=None):
+def render_screen_image(filename, screen, device=None, render_context=None, output_path=None):
     config = screen_config(device, screen)
     size = (config["width"], config["height"])
     source_path = existing_source_path(filename)
@@ -798,12 +846,22 @@ def render_screen_image(filename, screen, device=None):
         pdf_rendered = False
         if get_extension(source_path) == "pdf":
             try:
-                rendered = render_eink_pdf(source_path, fit_size)
+                rendered = render_eink_pdf(source_path, fit_size, render_context, output_path)
                 pdf_rendered = rendered is not None
                 if rendered is None:
                     rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
             except Exception as e:
                 print("[EINK PDF RENDER FALLBACK]", e)
+                log_eink_pdf_render(
+                    render_context,
+                    source_path,
+                    None,
+                    None,
+                    None,
+                    fit_size,
+                    output_path,
+                    f"exception: {e}",
+                )
                 rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
         else:
             rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
@@ -1530,8 +1588,16 @@ def preview_upload(variant, filename):
 
     if variant in ("lcd", "eink"):
         device = render_preview_device()
-        output, mimetype, extension = render_for_screen(filename, variant, device)
         base = filename.rsplit(".", 1)[0]
+        download_name = f"{base}-{variant}.{'png' if variant == 'eink' else 'jpg'}"
+        output_path = f"{request.path} -> {download_name}"
+        output, mimetype, extension = render_for_screen(
+            filename,
+            variant,
+            device,
+            render_context=f"preview/{variant}",
+            output_path=output_path,
+        )
         return send_file(
             output,
             mimetype=mimetype,
@@ -1573,9 +1639,16 @@ def render_upload(device_id, screen, filename):
 
     filename = clean_filename(filename)
     device = effective_device(get_device(device_id))
-    output, mimetype, extension = render_for_screen(filename, screen, device)
-
     base = filename.rsplit(".", 1)[0]
+    download_name = f"{base}-{screen}.{'png' if screen == 'eink' else 'jpg'}"
+    output_path = f"{request.path} -> {download_name}"
+    output, mimetype, extension = render_for_screen(
+        filename,
+        screen,
+        device,
+        render_context=f"device/{device_id}/render/{screen}",
+        output_path=output_path,
+    )
     return send_file(
         output,
         mimetype=mimetype,
