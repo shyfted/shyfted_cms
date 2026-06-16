@@ -2,13 +2,16 @@ package au.com.shyfted.client;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.Color;
+import android.net.Uri;
 import android.net.http.SslError;
 import android.os.BatteryManager;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -31,6 +34,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.io.File;
 
@@ -151,6 +155,7 @@ public final class MainActivity extends Activity {
         setContentView(root);
         enterFullScreen();
         attemptEnableAndroidBatteryPercentage();
+        startBatteryOverlayServiceIfAllowed();
         refreshBatteryStateOnce();
         showLastGoodLcdContent();
         peteyEinkServiceProbe.start();
@@ -227,6 +232,10 @@ public final class MainActivity extends Activity {
         view.setPadding(dp(8), dp(4), dp(8), dp(4));
         view.setMinWidth(dp(76));
         view.setVisibility(View.GONE);
+        view.setOnLongClickListener(v -> {
+            showAdminControls();
+            return true;
+        });
         return view;
     }
 
@@ -581,6 +590,117 @@ public final class MainActivity extends Activity {
         } catch (RuntimeException e) {
             Log.i(ShyftedDeviceClient.TAG, "Android secure battery percentage setting unavailable", e);
         }
+    }
+
+    private void startBatteryOverlayServiceIfAllowed() {
+        if (!BatteryOverlayService.canDrawOverlays(this)) {
+            Log.w(ShyftedDeviceClient.TAG, "Battery overlay not started: SYSTEM_ALERT_WINDOW permission missing");
+            return;
+        }
+
+        Intent intent = new Intent(this, BatteryOverlayService.class);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startService(intent);
+            } else {
+                startService(intent);
+            }
+        } catch (RuntimeException e) {
+            Log.w(ShyftedDeviceClient.TAG, "Battery overlay service start failed", e);
+        }
+    }
+
+    private void showAdminControls() {
+        LinearLayout layout = new LinearLayout(this);
+        layout.setOrientation(LinearLayout.VERTICAL);
+        int padding = dp(18);
+        layout.setPadding(padding, padding, padding, padding);
+
+        TextView status = new TextView(this);
+        status.setTextColor(Color.rgb(35, 39, 47));
+        status.setTextSize(14);
+        status.setText(BatteryOverlayService.canDrawOverlays(this)
+                ? "Overlay permission granted."
+                : "Overlay permission missing.");
+        status.setPadding(0, 0, 0, dp(12));
+        layout.addView(status, new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+        ));
+
+        Button overlaySettings = createAdminButton("Overlay settings");
+        overlaySettings.setOnClickListener(v -> openOverlaySettings());
+        layout.addView(overlaySettings);
+
+        Button checkSu = createAdminButton("Check root");
+        checkSu.setOnClickListener(v -> runAdminAction("Checking root", () -> {
+            boolean available = DevicePowerController.isSuAvailable();
+            return available ? "su is available." : "su is unavailable.";
+        }));
+        layout.addView(checkSu);
+
+        Button restart = createAdminButton("Restart device");
+        restart.setOnClickListener(v -> runAdminAction("Restarting", () ->
+                DevicePowerController.restart(this).message
+        ));
+        layout.addView(restart);
+
+        Button powerOff = createAdminButton("Power off device");
+        powerOff.setOnClickListener(v -> runAdminAction("Powering off", () ->
+                DevicePowerController.powerOff(this).message
+        ));
+        layout.addView(powerOff);
+
+        new AlertDialog.Builder(this)
+                .setTitle("Petey controls")
+                .setView(layout)
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    private Button createAdminButton(String label) {
+        Button button = new Button(this);
+        button.setText(label);
+        button.setAllCaps(false);
+        return button;
+    }
+
+    private void openOverlaySettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            Toast.makeText(this, "Overlay permission is automatic on this Android version.", Toast.LENGTH_LONG).show();
+            return;
+        }
+
+        Intent intent = new Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:" + getPackageName())
+        );
+        try {
+            startActivity(intent);
+        } catch (RuntimeException e) {
+            Log.w(ShyftedDeviceClient.TAG, "Overlay settings unavailable", e);
+            Toast.makeText(this, "Overlay settings unavailable on this build.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void runAdminAction(String pendingMessage, AdminAction action) {
+        Toast.makeText(this, pendingMessage, Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            String message;
+            try {
+                message = action.run();
+            } catch (RuntimeException e) {
+                Log.w(ShyftedDeviceClient.TAG, "Admin action failed", e);
+                message = "Power control unavailable on this build without root/system permission.";
+            }
+            String finalMessage = message;
+            Log.i(ShyftedDeviceClient.TAG, finalMessage);
+            runOnUiThread(() -> Toast.makeText(this, finalMessage, Toast.LENGTH_LONG).show());
+        }, "shyfted-admin-action").start();
+    }
+
+    private interface AdminAction {
+        String run();
     }
 
     private void startBatteryPulse() {

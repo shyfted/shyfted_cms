@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from email.message import EmailMessage
 from urllib.parse import urlparse
 import click
-from PIL import Image, ImageOps
+from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 import fitz
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -55,7 +55,10 @@ for upload_dir in (
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf"}
 MAX_FILE_SIZE = 5 * 1024 * 1024
-RENDER_RULE_VERSION = "render-v2"
+RENDER_RULE_VERSION = "render-v3"
+EINK_PDF_SAFE_MARGIN = 40
+EINK_PDF_RENDER_ZOOM = 4
+EINK_PDF_WHITE_THRESHOLD = 245
 
 
 def allowed_file(filename):
@@ -708,6 +711,61 @@ def fit_to_screen(path, size, background):
     return canvas
 
 
+def crop_pdf_content(img):
+    grayscale = img.convert("L")
+    mask = grayscale.point(lambda value: 255 if value < EINK_PDF_WHITE_THRESHOLD else 0)
+    bbox = mask.getbbox()
+    if not bbox:
+        return None
+
+    width = bbox[2] - bbox[0]
+    height = bbox[3] - bbox[1]
+    if width < img.width * 0.05 or height < img.height * 0.05:
+        return None
+
+    pad = max(8, round(min(img.width, img.height) * 0.01))
+    crop_box = (
+        max(0, bbox[0] - pad),
+        max(0, bbox[1] - pad),
+        min(img.width, bbox[2] + pad),
+        min(img.height, bbox[3] + pad),
+    )
+    return img.crop(crop_box)
+
+
+def render_eink_pdf(path, size):
+    with fitz.open(path) as doc:
+        if doc.page_count < 1:
+            raise ValueError("PDF has no pages")
+
+        page = doc.load_page(0)
+        pix = page.get_pixmap(
+            matrix=fitz.Matrix(EINK_PDF_RENDER_ZOOM, EINK_PDF_RENDER_ZOOM),
+            alpha=False,
+        )
+        img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+    cropped = crop_pdf_content(img)
+    if cropped is None:
+        return None
+
+    fit_size = (
+        max(1, size[0] - (EINK_PDF_SAFE_MARGIN * 2)),
+        max(1, size[1] - (EINK_PDF_SAFE_MARGIN * 2)),
+    )
+    cropped.thumbnail(fit_size, Image.Resampling.LANCZOS)
+
+    grayscale = cropped.convert("L")
+    grayscale = ImageEnhance.Contrast(grayscale).enhance(1.18)
+    grayscale = grayscale.filter(ImageFilter.UnsharpMask(radius=1.0, percent=90, threshold=3))
+
+    canvas = Image.new("L", size, 255)
+    x = (size[0] - grayscale.width) // 2
+    y = (size[1] - grayscale.height) // 2
+    canvas.paste(grayscale, (x, y))
+    return canvas
+
+
 def render_for_screen(filename, screen, device):
     if not upload_exists(filename):
         abort(404)
@@ -737,9 +795,22 @@ def render_screen_image(filename, screen, device=None):
     if screen == "eink" or config.get("type") == "eink":
         rotation = int(config["rotation"] or 0) % 360
         fit_size = size if rotation in (0, 180) else (size[1], size[0])
-        rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
+        pdf_rendered = False
+        if get_extension(source_path) == "pdf":
+            try:
+                rendered = render_eink_pdf(source_path, fit_size)
+                pdf_rendered = rendered is not None
+                if rendered is None:
+                    rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
+            except Exception as e:
+                print("[EINK PDF RENDER FALLBACK]", e)
+                rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
+        else:
+            rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
         if rotation:
             rendered = rendered.rotate(rotation, expand=True)
+        if pdf_rendered:
+            return rendered.convert("L")
         return rendered.convert("L").convert("1", dither=Image.Dither.FLOYDSTEINBERG)
 
     return fit_to_screen(source_path, size, (0, 0, 0))
