@@ -21,8 +21,14 @@ app.secret_key = os.environ.get("AUTH_SESSION_SECRET") or os.environ.get("SECRET
 if not app.secret_key:
     raise RuntimeError("Set AUTH_SESSION_SECRET before starting the CMS.")
 
-DATA_DIR = "data"
-UPLOAD_FOLDER = os.path.join("static", "uploads")
+STORAGE_DIR = os.environ.get("SHYFTED_STORAGE_DIR")
+if STORAGE_DIR:
+    STORAGE_DIR = os.path.abspath(STORAGE_DIR)
+    DATA_DIR = os.path.join(STORAGE_DIR, "data")
+    UPLOAD_FOLDER = os.path.join(STORAGE_DIR, "uploads")
+else:
+    DATA_DIR = "data"
+    UPLOAD_FOLDER = os.path.join("static", "uploads")
 ORIGINAL_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, "original")
 NORMALISED_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, "normalised")
 RENDERED_UPLOAD_FOLDER = os.path.join(UPLOAD_FOLDER, "rendered")
@@ -30,7 +36,12 @@ LCD_RENDERED_FOLDER = os.path.join(RENDERED_UPLOAD_FOLDER, "lcd")
 EINK_RENDERED_FOLDER = os.path.join(RENDERED_UPLOAD_FOLDER, "eink")
 THUMBNAIL_FOLDER = os.path.join(UPLOAD_FOLDER, "thumbs")
 APP_URL = os.environ.get("APP_URL", "http://localhost:5050").rstrip("/")
-DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{os.path.join(DATA_DIR, 'cms.db')}")
+DATABASE_URL_ENV = os.environ.get("DATABASE_URL")
+LEGACY_DEFAULT_DATABASE_URL = "sqlite:///data/cms.db"
+if STORAGE_DIR and (not DATABASE_URL_ENV or DATABASE_URL_ENV == LEGACY_DEFAULT_DATABASE_URL):
+    DATABASE_URL = f"sqlite:///{os.path.join(DATA_DIR, 'cms.db')}"
+else:
+    DATABASE_URL = DATABASE_URL_ENV or f"sqlite:///{os.path.join(DATA_DIR, 'cms.db')}"
 SESSION_LIFETIME_HOURS = int(os.environ.get("SESSION_LIFETIME_HOURS", "8"))
 WINDOW_SESSION_STORAGE_KEY = "shyfted_cms_window_token"
 RESET_TOKEN_MINUTES = int(os.environ.get("RESET_TOKEN_MINUTES", "30"))
@@ -46,12 +57,24 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=timedelta(hours=SESSION_LIFETIME_HOURS),
 )
 
-os.makedirs(DATA_DIR, exist_ok=True)
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-for upload_dir in (
+for runtime_dir in (
+    DATA_DIR,
+    UPLOAD_FOLDER,
     ORIGINAL_UPLOAD_FOLDER,
+    NORMALISED_UPLOAD_FOLDER,
+    RENDERED_UPLOAD_FOLDER,
+    LCD_RENDERED_FOLDER,
+    EINK_RENDERED_FOLDER,
+    THUMBNAIL_FOLDER,
 ):
-    os.makedirs(upload_dir, exist_ok=True)
+    os.makedirs(runtime_dir, exist_ok=True)
+
+print(
+    "[STORAGE] "
+    f"SHYFTED_STORAGE_DIR={STORAGE_DIR or 'unset'} "
+    f"DATA_DIR={DATA_DIR} "
+    f"UPLOAD_FOLDER={UPLOAD_FOLDER}"
+)
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf"}
 MAX_FILE_SIZE = 5 * 1024 * 1024
@@ -136,10 +159,8 @@ def utc_timestamp():
 
 
 def db_path():
-    if DATABASE_URL.startswith("sqlite:////"):
-        return DATABASE_URL.replace("sqlite://", "", 1)
     if DATABASE_URL.startswith("sqlite:///"):
-        return DATABASE_URL.replace("sqlite:///", "", 1)
+        return DATABASE_URL[len("sqlite:///"):]
 
     parsed = urlparse(DATABASE_URL)
     if parsed.scheme in ("", "sqlite"):
@@ -1245,6 +1266,28 @@ def users():
         "SELECT id, email, name, role, is_active, created_at, last_login_at FROM users ORDER BY name, email"
     ).fetchall()
     return render_template("users.html", users=[dict(row) for row in user_rows])
+
+
+@app.route("/admin/storage-status")
+@admin_required
+def storage_status():
+    def directory_status(path):
+        return {
+            "path": path,
+            "exists": os.path.isdir(path),
+            "writable": os.access(path, os.W_OK),
+        }
+
+    return jsonify({
+        "storage_dir": STORAGE_DIR,
+        "data_dir": directory_status(DATA_DIR),
+        "upload_folder": directory_status(UPLOAD_FOLDER),
+        "original_upload_folder": directory_status(ORIGINAL_UPLOAD_FOLDER),
+        "normalised_upload_folder": directory_status(NORMALISED_UPLOAD_FOLDER),
+        "rendered_upload_folder": directory_status(RENDERED_UPLOAD_FOLDER),
+        "thumbnail_folder": directory_status(THUMBNAIL_FOLDER),
+        "database_path": db_path(),
+    })
 
 
 @app.route("/users/create", methods=["GET", "POST"])
