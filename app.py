@@ -78,7 +78,7 @@ print(
 
 ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "pdf"}
 MAX_FILE_SIZE = 5 * 1024 * 1024
-RENDER_RULE_VERSION = "render-v3"
+RENDER_RULE_VERSION = "render-v4"
 EINK_PDF_SAFE_MARGIN = 40
 EINK_PDF_RENDER_ZOOM = 4
 EINK_PDF_WHITE_THRESHOLD = 245
@@ -582,6 +582,9 @@ def preview_upload_url(variant, filename, version=None):
     if not filename:
         return None
 
+    if version is not None and variant in ("lcd", "eink"):
+        version = f"{version}-{RENDER_RULE_VERSION}"
+
     url = f"/preview/{variant}/{filename}"
     if version is not None:
         url = f"{url}?v={version}"
@@ -757,7 +760,8 @@ def crop_pdf_content(img):
     return img.crop(crop_box), crop_box
 
 
-def log_eink_pdf_render(
+def log_pdf_render(
+    screen,
     render_context,
     source_path,
     original_dimensions,
@@ -768,7 +772,8 @@ def log_eink_pdf_render(
     fallback_reason=None,
 ):
     print(
-        "[EINK PDF RENDER] "
+        "[PDF RENDER] "
+        f"screen={screen or 'unknown'} "
         f"context={render_context or 'unknown'} "
         f"source_type={get_extension(source_path) or 'unknown'} "
         f"source={source_path} "
@@ -781,7 +786,17 @@ def log_eink_pdf_render(
     )
 
 
-def render_eink_pdf(path, size, render_context=None, output_path=None):
+def render_cropped_pdf(
+    path,
+    size,
+    screen,
+    background,
+    render_context=None,
+    output_path=None,
+    safe_margin=0,
+    grayscale=False,
+    enhance_grayscale=False,
+):
     with fitz.open(path) as doc:
         if doc.page_count < 1:
             raise ValueError("PDF has no pages")
@@ -796,7 +811,8 @@ def render_eink_pdf(path, size, render_context=None, output_path=None):
     original_dimensions = img.size
     cropped, crop_box = crop_pdf_content(img)
     if cropped is None:
-        log_eink_pdf_render(
+        log_pdf_render(
+            screen,
             render_context,
             path,
             original_dimensions,
@@ -810,20 +826,27 @@ def render_eink_pdf(path, size, render_context=None, output_path=None):
 
     cropped_dimensions = cropped.size
     fit_size = (
-        max(1, size[0] - (EINK_PDF_SAFE_MARGIN * 2)),
-        max(1, size[1] - (EINK_PDF_SAFE_MARGIN * 2)),
+        max(1, size[0] - (safe_margin * 2)),
+        max(1, size[1] - (safe_margin * 2)),
     )
     cropped.thumbnail(fit_size, Image.Resampling.LANCZOS)
 
-    grayscale = cropped.convert("L")
-    grayscale = ImageEnhance.Contrast(grayscale).enhance(1.18)
-    grayscale = grayscale.filter(ImageFilter.UnsharpMask(radius=1.0, percent=90, threshold=3))
+    if grayscale:
+        rendered = cropped.convert("L")
+        if enhance_grayscale:
+            rendered = ImageEnhance.Contrast(rendered).enhance(1.18)
+            rendered = rendered.filter(ImageFilter.UnsharpMask(radius=1.0, percent=90, threshold=3))
+        canvas_mode = "L"
+    else:
+        rendered = cropped
+        canvas_mode = "RGB"
 
-    canvas = Image.new("L", size, 255)
-    x = (size[0] - grayscale.width) // 2
-    y = (size[1] - grayscale.height) // 2
-    canvas.paste(grayscale, (x, y))
-    log_eink_pdf_render(
+    canvas = Image.new(canvas_mode, size, background)
+    x = (size[0] - rendered.width) // 2
+    y = (size[1] - rendered.height) // 2
+    canvas.paste(rendered, (x, y))
+    log_pdf_render(
+        screen,
         render_context,
         path,
         original_dimensions,
@@ -833,6 +856,31 @@ def render_eink_pdf(path, size, render_context=None, output_path=None):
         output_path,
     )
     return canvas
+
+
+def render_eink_pdf(path, size, render_context=None, output_path=None):
+    return render_cropped_pdf(
+        path,
+        size,
+        "eink",
+        255,
+        render_context=render_context,
+        output_path=output_path,
+        safe_margin=EINK_PDF_SAFE_MARGIN,
+        grayscale=True,
+        enhance_grayscale=True,
+    )
+
+
+def render_lcd_pdf(path, size, render_context=None, output_path=None):
+    return render_cropped_pdf(
+        path,
+        size,
+        "lcd",
+        (0, 0, 0),
+        render_context=render_context,
+        output_path=output_path,
+    )
 
 
 def render_for_screen(filename, screen, device, render_context=None, output_path=None):
@@ -873,7 +921,8 @@ def render_screen_image(filename, screen, device=None, render_context=None, outp
                     rendered = fit_to_screen(source_path, fit_size, (255, 255, 255))
             except Exception as e:
                 print("[EINK PDF RENDER FALLBACK]", e)
-                log_eink_pdf_render(
+                log_pdf_render(
+                    "eink",
                     render_context,
                     source_path,
                     None,
@@ -891,6 +940,25 @@ def render_screen_image(filename, screen, device=None, render_context=None, outp
         if pdf_rendered:
             return rendered.convert("L")
         return rendered.convert("L").convert("1", dither=Image.Dither.FLOYDSTEINBERG)
+
+    if get_extension(source_path) == "pdf":
+        try:
+            rendered = render_lcd_pdf(source_path, size, render_context, output_path)
+            if rendered is not None:
+                return rendered
+        except Exception as e:
+            print("[LCD PDF RENDER FALLBACK]", e)
+            log_pdf_render(
+                "lcd",
+                render_context,
+                source_path,
+                None,
+                None,
+                None,
+                size,
+                output_path,
+                f"exception: {e}",
+            )
 
     return fit_to_screen(source_path, size, (0, 0, 0))
 
