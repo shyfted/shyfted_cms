@@ -484,6 +484,15 @@ button:hover,
     color:#17345c;
 }
 
+.modal-close {
+    background:#30384a;
+    color:#dbe4f3;
+    flex:0 0 auto;
+    min-width:42px;
+    padding:7px 10px;
+    width:auto;
+}
+
 .preview-panel { display:none; }
 .preview-panel.active { display:block; }
 
@@ -861,7 +870,7 @@ button:hover,
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="preview-header">
             <div class="preview-title" id="previewTitle"></div>
-            <button class="preview-tab" type="button" onclick="closePreview()">Close</button>
+            <button class="modal-close" type="button" onclick="closePreview()">X</button>
         </div>
 
         <div class="preview-tabs">
@@ -898,7 +907,7 @@ button:hover,
     <div class="modal-content" onclick="event.stopPropagation()">
         <div class="preview-header">
             <div class="preview-title">{{ active_device.name }}</div>
-            <button class="preview-tab" type="button" onclick="closeDevicePreview()">Close</button>
+            <button class="modal-close" type="button" onclick="closeDevicePreview()">X</button>
         </div>
 
         <div class="device-preview-grid">
