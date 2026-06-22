@@ -987,6 +987,12 @@ def preview_device_without_hardware_rotation(device, screen):
     device = effective_device(device)
     screens = dict(device.get("screens") or {})
     screen_data = dict(screens.get(screen) or {})
+    rotation = int(screen_data.get("rotation", screen_data.get("orientation", 0)) or 0) % 360
+    if rotation in (90, 270):
+        width = int(screen_data.get("width") or 800)
+        height = int(screen_data.get("height") or 480)
+        screen_data["width"] = height
+        screen_data["height"] = width
     screen_data["orientation"] = 0
     screen_data["rotation"] = 0
     screens[screen] = screen_data
@@ -1195,13 +1201,29 @@ def battery_label(device):
     return " - ".join(parts) if parts else None
 
 
+def display_device_name(device_id, device):
+    name = (device or {}).get("name") or device_id
+    if device_id == "device_001" and name.strip().lower() in {
+        "the frankenstein",
+        "the franklenstein",
+        "frankenstein",
+        "franklenstein",
+    }:
+        return "Franky"
+
+    return name
+
+
 def live_preview(device_id, screen, assignment, device):
     filename = assignment.get(screen)
-    content_id = screen_content_id(filename, screen, effective_device(device))
+    render_device = effective_device(device)
+    content_id = screen_content_id(filename, screen, render_device)
+    thumb_device = preview_device_without_hardware_rotation(device, screen)
+    thumb_content_id = screen_content_id(filename, screen, thumb_device)
     return {
         "file": filename,
         "url": rendered_upload_url(device_id, screen, filename, content_id),
-        "thumb_url": live_thumbnail_url(device_id, screen, filename, content_id),
+        "thumb_url": live_thumbnail_url(device_id, screen, filename, thumb_content_id),
     }
 
 
@@ -1211,7 +1233,7 @@ def device_cards():
         live = get_device_live(device_id)
         cards.append({
             "id": device_id,
-            "name": device.get("name") or device_id,
+            "name": display_device_name(device_id, device),
             "status": "online" if is_device_online(device) else "offline",
             "last_seen": device.get("last_seen"),
             "battery": battery_label(device),
@@ -1231,7 +1253,7 @@ def device_view_model(device_id):
     selection = get_device_selection(device_id)
     return {
         "id": device_id,
-        "name": device.get("name") or device_id,
+        "name": display_device_name(device_id, device),
         "status": "online" if is_device_online(device) else "offline",
         "last_seen": device.get("last_seen"),
         "battery": battery_label(device),
