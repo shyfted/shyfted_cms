@@ -145,6 +145,20 @@ button {
     width:auto;
 }
 
+.secondary-action {
+    background:#c7ddff;
+    color:#17345c;
+    font-size:16px;
+    padding:13px 18px;
+    width:auto;
+}
+
+.device-actions {
+    align-items:center;
+    display:flex;
+    gap:10px;
+}
+
 button {
     color:#172033;
     padding:8px;
@@ -509,6 +523,55 @@ button:hover,
     width:100%;
 }
 
+.device-preview-grid {
+    display:grid;
+    gap:14px;
+    grid-template-columns:repeat(2, minmax(0, 1fr));
+}
+
+.device-preview-block {
+    min-width:0;
+}
+
+.device-preview-block h3 {
+    color:#f4f7fb;
+    font-size:14px;
+    margin:0 0 8px;
+}
+
+.device-preview-pair {
+    display:grid;
+    gap:10px;
+    grid-template-columns:1fr 1fr;
+}
+
+.device-preview-frame {
+    align-items:center;
+    background:#0c1018;
+    border:1px solid #273143;
+    border-radius:8px;
+    display:flex;
+    height:230px;
+    justify-content:center;
+    overflow:hidden;
+    padding:10px;
+}
+
+.device-preview-frame img {
+    display:block;
+    height:100%;
+    object-fit:contain;
+    width:100%;
+}
+
+.device-preview-label {
+    color:#b8c4d6;
+    display:block;
+    font-size:11px;
+    font-weight:800;
+    margin-top:6px;
+}
+
 @media (max-width: 860px) {
     body { padding:14px; }
 
@@ -542,6 +605,11 @@ button:hover,
 
     .preview-tabs {
         grid-template-columns:repeat(2, minmax(0, 1fr));
+    }
+
+    .device-preview-grid,
+    .device-preview-pair {
+        grid-template-columns:1fr;
     }
 }
 </style>
@@ -647,10 +715,13 @@ button:hover,
                     {% if active_device.last_seen %} Last seen {{ active_device.last_seen }}{% endif %}
                 </div>
             </div>
-            <form action="{{ url_for('push_device', device_id=active_device.id) }}" method="POST" onsubmit="return confirm('PUSH selected media to {{ active_device.name }}?')">
-                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                <button class="push">PUSH</button>
-            </form>
+            <div class="device-actions">
+                <button class="secondary-action" type="button" onclick="openDevicePreview()">Preview</button>
+                <form action="{{ url_for('push_device', device_id=active_device.id) }}" method="POST" onsubmit="return confirm('PUSH selected media to {{ active_device.name }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button class="push">PUSH</button>
+                </form>
+            </div>
         </div>
 
         <div class="media-grid">
@@ -822,6 +893,75 @@ button:hover,
     </div>
 </div>
 
+{% if active_device %}
+<div class="modal" id="devicePreviewModal" onclick="closeDevicePreview()">
+    <div class="modal-content" onclick="event.stopPropagation()">
+        <div class="preview-header">
+            <div class="preview-title">{{ active_device.name }}</div>
+            <button class="preview-tab" type="button" onclick="closeDevicePreview()">Close</button>
+        </div>
+
+        <div class="device-preview-grid">
+            <div class="device-preview-block">
+                <h3>LCD</h3>
+                <div class="device-preview-pair">
+                    <div>
+                        <div class="device-preview-frame">
+                            {% if active_device.lcd.thumb_url %}
+                            <img src="{{ active_device.lcd.thumb_url }}" alt="">
+                            {% else %}
+                            <span class="live-empty">Empty</span>
+                            {% endif %}
+                        </div>
+                        <span class="device-preview-label">Live</span>
+                        <p class="filename" title="{{ active_device.lcd.file or '' }}">{{ active_device.lcd.file or 'No media' }}</p>
+                    </div>
+                    <div>
+                        <div class="device-preview-frame">
+                            {% if active_device.selected_lcd.thumb_url %}
+                            <img src="{{ active_device.selected_lcd.thumb_url }}" alt="">
+                            {% else %}
+                            <span class="live-empty">No selection</span>
+                            {% endif %}
+                        </div>
+                        <span class="device-preview-label">Selected</span>
+                        <p class="filename" title="{{ active_device.selected_lcd.file or '' }}">{{ active_device.selected_lcd.file or 'No media' }}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="device-preview-block">
+                <h3>E-Ink</h3>
+                <div class="device-preview-pair">
+                    <div>
+                        <div class="device-preview-frame">
+                            {% if active_device.eink.thumb_url %}
+                            <img src="{{ active_device.eink.thumb_url }}" alt="">
+                            {% else %}
+                            <span class="live-empty">Empty</span>
+                            {% endif %}
+                        </div>
+                        <span class="device-preview-label">Live</span>
+                        <p class="filename" title="{{ active_device.eink.file or '' }}">{{ active_device.eink.file or 'No media' }}</p>
+                    </div>
+                    <div>
+                        <div class="device-preview-frame">
+                            {% if active_device.selected_eink.thumb_url %}
+                            <img src="{{ active_device.selected_eink.thumb_url }}" alt="">
+                            {% else %}
+                            <span class="live-empty">No selection</span>
+                            {% endif %}
+                        </div>
+                        <span class="device-preview-label">Selected</span>
+                        <p class="filename" title="{{ active_device.selected_eink.file or '' }}">{{ active_device.selected_eink.file or 'No media' }}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <script>
 function showPreviewTab(name) {
     document.querySelectorAll("[data-preview-tab]").forEach(function (tab) {
@@ -860,6 +1000,14 @@ function openPreview(trigger) {
 
 function closePreview() {
     document.getElementById("previewModal").style.display = "none";
+}
+
+function openDevicePreview() {
+    document.getElementById("devicePreviewModal").style.display = "flex";
+}
+
+function closeDevicePreview() {
+    document.getElementById("devicePreviewModal").style.display = "none";
 }
 
 const allowedUploadExtensions = ["png", "jpg", "jpeg", "pdf"];

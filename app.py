@@ -1261,6 +1261,8 @@ def device_view_model(device_id):
         "selection": selection,
         "lcd": live_preview(device_id, "lcd", live, device),
         "eink": live_preview(device_id, "eink", live, device),
+        "selected_lcd": live_preview(device_id, "lcd", selection, device),
+        "selected_eink": live_preview(device_id, "eink", selection, device),
     }
 
 
