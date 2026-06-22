@@ -43,7 +43,7 @@ viewer = None
 
 
 DEVICE_SPEC = {
-    "name": "The frankenstein",
+    "name": "Franky",
     "hostname": socket.gethostname(),
     "client_version": "frankenstein-3",
     "screens": {
