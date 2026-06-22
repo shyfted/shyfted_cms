@@ -684,6 +684,15 @@ def rendered_upload_url(device_id, screen, filename, version=None):
     return url
 
 
+def normalise_assignment(state=None):
+    state = state or {}
+    return {
+        "lcd": state.get("lcd"),
+        "eink": state.get("eink"),
+        "timestamp": state.get("timestamp"),
+    }
+
+
 def screen_config(device, screen):
     screens = (device or {}).get("screens") or {}
     config = screens.get(screen) or {}
@@ -1046,7 +1055,172 @@ def clear_device_screen(device_id, screen):
     return True
 
 
-# ===== STAGING =====
+# ===== DEVICE ASSIGNMENTS =====
+def get_device_display_state():
+    return get_device_assignments()
+
+
+def save_device_display_state(state):
+    save_device_assignments(state)
+
+
+def get_device_selection_state():
+    return load_json("device_selections.json", {})
+
+
+def save_device_selection_state(state):
+    save_json("device_selections.json", state)
+
+
+def get_device_live(device_id):
+    state = get_device_display_state()
+    if device_id in state:
+        return normalise_assignment(state.get(device_id))
+
+    return normalise_assignment(get_display())
+
+
+def set_device_live(device_id, assignment):
+    state = get_device_display_state()
+    current = normalise_assignment(state.get(device_id))
+    current["lcd"] = assignment.get("lcd")
+    current["eink"] = assignment.get("eink")
+    current["timestamp"] = datetime.now().isoformat()
+    state[device_id] = current
+    save_device_display_state(state)
+    return current
+
+
+def get_device_selection(device_id):
+    state = get_device_selection_state()
+    return normalise_assignment(state.get(device_id))
+
+
+def set_device_selection(device_id, lcd=None, eink=None):
+    state = get_device_selection_state()
+    current = normalise_assignment(state.get(device_id))
+
+    if lcd:
+        print(f"[SELECT LCD] device={device_id} file={lcd}")
+        current["lcd"] = lcd
+
+    if eink:
+        print(f"[SELECT EINK] device={device_id} file={eink}")
+        current["eink"] = eink
+
+    current["timestamp"] = datetime.now().isoformat()
+    state[device_id] = current
+    save_device_selection_state(state)
+    return current
+
+
+def replace_device_selection(device_id, assignment):
+    state = get_device_selection_state()
+    current = normalise_assignment(assignment)
+    current["timestamp"] = datetime.now().isoformat()
+    state[device_id] = current
+    save_device_selection_state(state)
+    return current
+
+
+def clean_assignment_for_publish(assignment):
+    cleaned = {}
+    invalid = []
+
+    for screen in ("lcd", "eink"):
+        filename = assignment.get(screen)
+        if filename and upload_exists(filename):
+            cleaned[screen] = filename
+        else:
+            cleaned[screen] = None
+            if filename:
+                invalid.append(f"{screen.upper()} ({filename})")
+
+    return cleaned, invalid
+
+
+def is_device_online(device):
+    last_seen = (device or {}).get("last_seen")
+    if not last_seen:
+        return False
+
+    try:
+        seen_at = datetime.fromisoformat(last_seen.replace("Z", ""))
+    except ValueError:
+        return False
+
+    return datetime.utcnow() - seen_at <= timedelta(minutes=3)
+
+
+def battery_label(device):
+    battery = (device or {}).get("battery") or {}
+    if not isinstance(battery, dict) or not battery:
+        return None
+
+    parts = []
+    level = battery.get("percentage", battery.get("level"))
+    if level is not None:
+        try:
+            parts.append(f"{int(level)}%")
+        except (TypeError, ValueError):
+            parts.append(str(level))
+
+    charging = battery.get("charging")
+    if charging is True:
+        parts.append("Charging")
+    elif charging is False:
+        parts.append("On battery")
+
+    return " - ".join(parts) if parts else None
+
+
+def live_preview(device_id, screen, assignment, device):
+    filename = assignment.get(screen)
+    content_id = screen_content_id(filename, screen, effective_device(device))
+    return {
+        "file": filename,
+        "url": rendered_upload_url(device_id, screen, filename, content_id),
+    }
+
+
+def device_cards():
+    cards = []
+    for device_id, device in sorted(get_devices().items()):
+        live = get_device_live(device_id)
+        cards.append({
+            "id": device_id,
+            "name": device.get("name") or device_id,
+            "status": "online" if is_device_online(device) else "offline",
+            "last_seen": device.get("last_seen"),
+            "battery": battery_label(device),
+            "lcd": live_preview(device_id, "lcd", live, device),
+            "eink": live_preview(device_id, "eink", live, device),
+        })
+
+    return cards
+
+
+def device_view_model(device_id):
+    device = get_device(device_id)
+    if not device:
+        return None
+
+    live = get_device_live(device_id)
+    selection = get_device_selection(device_id)
+    return {
+        "id": device_id,
+        "name": device.get("name") or device_id,
+        "status": "online" if is_device_online(device) else "offline",
+        "last_seen": device.get("last_seen"),
+        "battery": battery_label(device),
+        "live": live,
+        "selection": selection,
+        "lcd": live_preview(device_id, "lcd", live, device),
+        "eink": live_preview(device_id, "eink", live, device),
+    }
+
+
+# ===== LEGACY SELECTION ROUTES =====
 def get_staging():
     return load_json("staging.json", {"lcd": None, "eink": None})
 
@@ -1101,7 +1275,7 @@ def clear_file_references(filename):
         if staging.get(screen) == filename:
             staging[screen] = None
             staging_changed = True
-            cleared.append(f"staged {screen.upper()}")
+            cleared.append(f"selected {screen.upper()}")
 
     if staging_changed:
         save_json("staging.json", staging)
@@ -1118,6 +1292,18 @@ def clear_file_references(filename):
 
     if assignments_changed:
         save_device_assignments(assignments)
+
+    device_selections = get_device_selection_state()
+    selections_changed = False
+    for device_id, assignment in device_selections.items():
+        for screen in ("lcd", "eink"):
+            if assignment.get(screen) == filename:
+                assignment[screen] = None
+                selections_changed = True
+                cleared.append(f"{device_id} selected {screen.upper()}")
+
+    if selections_changed:
+        save_device_selection_state(device_selections)
 
     return cleared
 
@@ -1176,9 +1362,16 @@ def register_device(device_id, payload):
     battery = payload.get("battery")
     if isinstance(battery, dict):
         device["battery"] = {
-            "percentage": battery.get("percentage"),
+            "percentage": battery.get("percentage", battery.get("level")),
+            "level": battery.get("level", battery.get("percentage")),
             "charging": battery.get("charging"),
             "plugged": battery.get("plugged"),
+        }
+    elif "battery_level" in payload or "charging" in payload:
+        device["battery"] = {
+            "percentage": payload.get("battery_level"),
+            "level": payload.get("battery_level"),
+            "charging": payload.get("charging"),
         }
 
     devices[device_id] = device
@@ -1320,10 +1513,50 @@ def index():
     return render_template(
         "index.html",
         files=files,
-        live=get_display(),
-        staging=get_staging(),
-        devices=get_devices(),
-        device_assignments=get_device_assignments(),
+        devices=device_cards(),
+        active_device=None,
+        page="devices",
+    )
+
+
+@app.route("/device/<device_id>")
+@login_required
+def device_control(device_id):
+    active_device = device_view_model(device_id)
+    if not active_device:
+        flash("That device has not reported in yet.", "error")
+        return redirect(url_for("index"))
+
+    return render_template(
+        "index.html",
+        files=list_uploads(),
+        devices=device_cards(),
+        active_device=active_device,
+        page="devices",
+    )
+
+
+@app.route("/media")
+@login_required
+def media():
+    return render_template(
+        "index.html",
+        files=list_uploads(),
+        devices=device_cards(),
+        active_device=None,
+        page="media",
+    )
+
+
+@app.route("/settings")
+@login_required
+def settings():
+    return render_template(
+        "index.html",
+        files=list_uploads(),
+        devices=device_cards(),
+        active_device=None,
+        page="settings",
     )
 
 
@@ -1516,17 +1749,21 @@ def upload():
 @login_required
 def stage_lcd():
     validate_csrf()
+    device_id = request.form.get("device_id", "").strip()
+    if device_id:
+        return select_lcd(device_id)
+
     f = clean_filename(request.form.get("file"))
     if not f:
-        flash("Choose a file to stage for LCD.", "error")
+        flash("Choose a file for LCD.", "error")
         return redirect("/")
 
     if not upload_exists(f):
-        flash(f"Cannot stage {f}; that upload no longer exists.", "error")
+        flash(f"Cannot select {f}; that upload no longer exists.", "error")
         return redirect("/")
 
     set_staging(lcd=f)
-    flash(f"Staged {f} for LCD.", "success")
+    flash(f"Selected {f} for LCD.", "success")
     return redirect("/")
 
 
@@ -1534,17 +1771,21 @@ def stage_lcd():
 @login_required
 def stage_eink():
     validate_csrf()
+    device_id = request.form.get("device_id", "").strip()
+    if device_id:
+        return select_eink(device_id)
+
     f = clean_filename(request.form.get("file"))
     if not f:
-        flash("Choose a file to stage for E-Ink.", "error")
+        flash("Choose a file for E-Ink.", "error")
         return redirect("/")
 
     if not upload_exists(f):
-        flash(f"Cannot stage {f}; that upload no longer exists.", "error")
+        flash(f"Cannot select {f}; that upload no longer exists.", "error")
         return redirect("/")
 
     set_staging(eink=f)
-    flash(f"Staged {f} for E-Ink.", "success")
+    flash(f"Selected {f} for E-Ink.", "success")
     return redirect("/")
 
 
@@ -1552,21 +1793,25 @@ def stage_eink():
 @login_required
 def push_live():
     validate_csrf()
+    device_id = request.form.get("device_id", "").strip()
+    if device_id:
+        return push_device(device_id)
+
     staging = get_staging()
     cleaned, invalid = clean_staging_for_publish(staging)
 
     if invalid:
         save_json("staging.json", cleaned)
-        flash(f"Could not push missing staged file(s): {', '.join(invalid)}.", "error")
+        flash(f"Could not push missing file(s): {', '.join(invalid)}.", "error")
         return redirect("/")
 
     if not cleaned.get("lcd") and not cleaned.get("eink"):
-        flash("Nothing staged to push live.", "error")
+        flash("Choose LCD or E-Ink content before pressing PUSH.", "error")
         return redirect("/")
 
     set_display(cleaned)
     print("[PUSH LIVE]", cleaned)
-    flash("Pushed staged content live.", "success")
+    flash("Pushed content live.", "success")
     return redirect("/")
 
 
@@ -1628,6 +1873,81 @@ def clear_device_screen_route():
         flash(f"{device.get('name') or device_id} has no {screen.upper()} override to clear.", "error")
 
     return redirect("/")
+
+
+@app.route("/device/<device_id>/select_lcd", methods=["POST"])
+@login_required
+def select_lcd(device_id):
+    validate_csrf()
+    f = clean_filename(request.form.get("file"))
+    if not get_device(device_id):
+        flash("That device has not reported in yet.", "error")
+        return redirect(url_for("index"))
+
+    if not f:
+        flash("Choose a file for LCD.", "error")
+        return redirect(url_for("device_control", device_id=device_id))
+
+    if not upload_exists(f):
+        flash(f"Cannot select {f}; that upload no longer exists.", "error")
+        return redirect(url_for("device_control", device_id=device_id))
+
+    set_device_selection(device_id, lcd=f)
+    flash(f"Selected {f} for LCD on {get_device(device_id).get('name') or device_id}.", "success")
+    return redirect(url_for("device_control", device_id=device_id))
+
+
+@app.route("/device/<device_id>/select_eink", methods=["POST"])
+@login_required
+def select_eink(device_id):
+    validate_csrf()
+    f = clean_filename(request.form.get("file"))
+    if not get_device(device_id):
+        flash("That device has not reported in yet.", "error")
+        return redirect(url_for("index"))
+
+    if not f:
+        flash("Choose a file for E-Ink.", "error")
+        return redirect(url_for("device_control", device_id=device_id))
+
+    if not upload_exists(f):
+        flash(f"Cannot select {f}; that upload no longer exists.", "error")
+        return redirect(url_for("device_control", device_id=device_id))
+
+    set_device_selection(device_id, eink=f)
+    flash(f"Selected {f} for E-Ink on {get_device(device_id).get('name') or device_id}.", "success")
+    return redirect(url_for("device_control", device_id=device_id))
+
+
+@app.route("/device/<device_id>/push", methods=["POST"])
+@login_required
+def push_device(device_id):
+    validate_csrf()
+    if not get_device(device_id):
+        flash("That device has not reported in yet.", "error")
+        return redirect(url_for("index"))
+
+    selection = get_device_selection(device_id)
+    cleaned, invalid = clean_assignment_for_publish(selection)
+
+    if invalid:
+        replace_device_selection(device_id, cleaned)
+        flash(f"Could not push missing file(s): {', '.join(invalid)}.", "error")
+        return redirect(url_for("device_control", device_id=device_id))
+
+    if not cleaned.get("lcd") and not cleaned.get("eink"):
+        flash("Choose LCD or E-Ink content before pressing PUSH.", "error")
+        return redirect(url_for("device_control", device_id=device_id))
+
+    next_live = get_device_live(device_id)
+    for screen in ("lcd", "eink"):
+        if cleaned.get(screen):
+            next_live[screen] = cleaned[screen]
+
+    live = set_device_live(device_id, next_live)
+    print("[PUSH DEVICE]", device_id, live)
+    flash(f"Pushed content to {get_device(device_id).get('name') or device_id}.", "success")
+    return redirect(url_for("device_control", device_id=device_id))
 
 
 @app.route("/delete", methods=["POST"])
@@ -1721,7 +2041,7 @@ def preview_upload(variant, filename):
 
 @app.route("/device/<device_id>/config")
 def config(device_id):
-    state = effective_display(device_id)
+    state = get_device_live(device_id)
     device = effective_device(get_device(device_id))
     timestamp = state.get("timestamp")
     lcd_content_id = screen_content_id(state.get("lcd"), "lcd", device)
