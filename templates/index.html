@@ -708,8 +708,8 @@ button:hover,
         <div class="live-pair" style="margin-top:12px;">
             <div class="live-shot">
                 <div class="live-frame">
-                    {% if active_device.lcd.url %}
-                    <img src="{{ active_device.lcd.url }}" alt="">
+                    {% if active_device.lcd.thumb_url %}
+                    <img src="{{ active_device.lcd.thumb_url }}" alt="">
                     {% else %}
                     <span class="live-empty">Empty</span>
                     {% endif %}
@@ -719,8 +719,8 @@ button:hover,
             </div>
             <div class="live-shot">
                 <div class="live-frame">
-                    {% if active_device.eink.url %}
-                    <img src="{{ active_device.eink.url }}" alt="">
+                    {% if active_device.eink.thumb_url %}
+                    <img src="{{ active_device.eink.thumb_url }}" alt="">
                     {% else %}
                     <span class="live-empty">Empty</span>
                     {% endif %}
@@ -756,8 +756,8 @@ button:hover,
             <div class="live-pair">
                 <div class="live-shot">
                     <div class="live-frame">
-                        {% if device.lcd.url %}
-                        <img src="{{ device.lcd.url }}" alt="">
+                        {% if device.lcd.thumb_url %}
+                        <img src="{{ device.lcd.thumb_url }}" alt="">
                         {% else %}
                         <span class="live-empty">Empty</span>
                         {% endif %}
@@ -767,8 +767,8 @@ button:hover,
                 </div>
                 <div class="live-shot">
                     <div class="live-frame">
-                        {% if device.eink.url %}
-                        <img src="{{ device.eink.url }}" alt="">
+                        {% if device.eink.thumb_url %}
+                        <img src="{{ device.eink.thumb_url }}" alt="">
                         {% else %}
                         <span class="live-empty">Empty</span>
                         {% endif %}

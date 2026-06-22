@@ -684,6 +684,17 @@ def rendered_upload_url(device_id, screen, filename, version=None):
     return url
 
 
+def live_thumbnail_url(device_id, screen, filename, version=None):
+    if not filename:
+        return None
+
+    url = f"/device/{device_id}/live-thumbnail/{screen}/{filename}"
+    if version is not None:
+        url = f"{url}?v={version}"
+
+    return url
+
+
 def normalise_assignment(state=None):
     state = state or {}
     return {
@@ -972,6 +983,16 @@ def render_screen_image(filename, screen, device=None, render_context=None, outp
     return fit_to_screen(source_path, size, (0, 0, 0))
 
 
+def preview_device_without_hardware_rotation(device, screen):
+    device = effective_device(device)
+    screens = dict(device.get("screens") or {})
+    screen_data = dict(screens.get(screen) or {})
+    screen_data["orientation"] = 0
+    screen_data["rotation"] = 0
+    screens[screen] = screen_data
+    return {**device, "screens": screens}
+
+
 def screen_content_id(filename, screen, device):
     version = source_version(filename)
     if not filename or not version:
@@ -1180,6 +1201,7 @@ def live_preview(device_id, screen, assignment, device):
     return {
         "file": filename,
         "url": rendered_upload_url(device_id, screen, filename, content_id),
+        "thumb_url": live_thumbnail_url(device_id, screen, filename, content_id),
     }
 
 
@@ -2084,6 +2106,33 @@ def render_upload(device_id, screen, filename):
         output,
         mimetype=mimetype,
         download_name=f"{base}-{screen}.{extension}",
+        max_age=0,
+    )
+
+
+@app.route("/device/<device_id>/live-thumbnail/<screen>/<path:filename>")
+@login_required
+def render_live_thumbnail(device_id, screen, filename):
+    if screen not in ("lcd", "eink"):
+        abort(404)
+
+    filename = clean_filename(filename)
+    device = preview_device_without_hardware_rotation(get_device(device_id), screen)
+    base = filename.rsplit(".", 1)[0]
+    download_name = f"{base}-{screen}-live-thumbnail.{'png' if screen == 'eink' else 'jpg'}"
+    output_path = f"{request.path} -> {download_name}"
+    output, mimetype, extension = render_for_screen(
+        filename,
+        screen,
+        device,
+        render_context=f"live-thumbnail/{screen}",
+        output_path=output_path,
+    )
+
+    return send_file(
+        output,
+        mimetype=mimetype,
+        download_name=f"{base}-{screen}-live-thumbnail.{extension}",
         max_age=0,
     )
 
