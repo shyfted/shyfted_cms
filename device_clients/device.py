@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import signal
 import time
 import socket
 import subprocess
@@ -36,6 +37,8 @@ REQUEST_TIMEOUT = 10
 LCD_SIZE = (800, 480)
 EINK_SIZE = (800, 480)
 EINK_ORIENTATION = 180
+LCD_RELAY_GPIO_PIN = 27
+LCD_RELAY_STARTUP_DELAY_SECONDS = 2.5
 
 lcd_current_key = None
 eink_current_key = None
@@ -70,6 +73,68 @@ DEVICE_SPEC = {
 
 def log(*parts):
     print(*parts, flush=True)
+
+
+def request_shutdown(signum, _frame):
+    raise KeyboardInterrupt(f"received signal {signum}")
+
+
+class LcdRelayController:
+    def __init__(self, pin, startup_delay):
+        self.pin = pin
+        self.startup_delay = startup_delay
+        self.gpio = None
+        self.available = False
+
+    def setup_low(self):
+        try:
+            import RPi.GPIO as GPIO
+        except ModuleNotFoundError:
+            log("[LCD RELAY] RPi.GPIO is not installed; relay control disabled.")
+            return
+        except Exception as e:
+            log("[LCD RELAY] GPIO import failed; relay control disabled.", repr(e))
+            return
+
+        try:
+            GPIO.setwarnings(False)
+            GPIO.setmode(GPIO.BCM)
+            GPIO.setup(self.pin, GPIO.OUT, initial=GPIO.LOW)
+        except Exception as e:
+            log(f"[LCD RELAY] failed to initialise GPIO{self.pin} LOW; relay control disabled.", repr(e))
+            return
+
+        self.gpio = GPIO
+        self.available = True
+        log(f"[LCD RELAY] GPIO{self.pin} initialised LOW; LCD power is off.")
+
+    def power_on(self):
+        if not self.available:
+            return
+
+        try:
+            self.gpio.output(self.pin, self.gpio.HIGH)
+            log(f"[LCD RELAY] GPIO{self.pin} set HIGH; LCD power is on.")
+        except Exception as e:
+            log(f"[LCD RELAY] failed to set GPIO{self.pin} HIGH.", repr(e))
+
+    def power_off(self):
+        if not self.available:
+            return
+
+        try:
+            self.gpio.output(self.pin, self.gpio.LOW)
+            log(f"[LCD RELAY] GPIO{self.pin} set LOW; LCD power is off.")
+        except Exception as e:
+            log(f"[LCD RELAY] failed to set GPIO{self.pin} LOW.", repr(e))
+
+    def power_on_after_startup_delay(self):
+        if not self.available:
+            return
+
+        log(f"[LCD RELAY] waiting {self.startup_delay:.1f}s before powering LCD.")
+        time.sleep(self.startup_delay)
+        self.power_on()
 
 
 def require_dependencies():
@@ -282,78 +347,92 @@ def show_eink(path, screen_config=None):
 def main():
     global lcd_current_key, eink_current_key
 
-    require_dependencies()
-    ensure_download_dir()
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
 
-    log(f"Device running against {CMS} as {DEVICE_ID}...")
-    log_startup_config()
-    send_heartbeat()
+    lcd_relay = LcdRelayController(
+        LCD_RELAY_GPIO_PIN,
+        LCD_RELAY_STARTUP_DELAY_SECONDS,
+    )
 
-    last_heartbeat = time.time()
+    try:
+        lcd_relay.setup_low()
 
-    while True:
-        try:
-            now = time.time()
+        require_dependencies()
+        ensure_download_dir()
 
-            if now - last_heartbeat >= HEARTBEAT_SECONDS:
-                send_heartbeat()
-                last_heartbeat = now
+        log(f"Device running against {CMS} as {DEVICE_ID}...")
+        log_startup_config()
+        lcd_relay.power_on_after_startup_delay()
+        send_heartbeat()
 
-            data = poll_config()
-            timestamp = data.get("timestamp")
-            device = data.get("device") or {}
-            screens = device.get("screens") or DEVICE_SPEC["screens"]
-            log(
-                "[CONFIG] received "
-                f"timestamp={timestamp} "
-                f"lcd_file={(data.get('lcd') or {}).get('file')} "
-                f"lcd_content_id={(data.get('lcd') or {}).get('content_id')} "
-                f"eink_file={(data.get('eink') or {}).get('file')} "
-                f"eink_content_id={(data.get('eink') or {}).get('content_id')}"
-            )
+        last_heartbeat = time.time()
 
-            lcd = data.get("lcd", {})
-            lcd_file = lcd.get("file")
-            lcd_url = lcd.get("url")
-            lcd_key = image_key(lcd, timestamp)
-
-            if lcd_file and lcd_url and lcd_key != lcd_current_key:
-                log(f"[LCD] rendered_cms_url={absolute_url(lcd_url)} file={lcd_file}")
-                path = download(lcd_url, LCD_RENDERED, "LCD")
-                if path:
-                    show_lcd(path)
-                    lcd_current_key = lcd_key
-
-            eink = data.get("eink", {})
-            eink_file = eink.get("file")
-            eink_url = eink.get("url")
-            eink_key = image_key(eink, timestamp)
-            log(f"[EINK] rendered_cms_url={absolute_url(eink_url)} file={eink_file}")
-
-            if eink_file and eink_url and eink_key != eink_current_key:
-                path = download(eink_url, EINK_RENDERED, "EINK")
-                if path:
-                    try:
-                        show_eink(path, screens.get("eink"))
-                        eink_current_key = eink_key
-                    except Exception as e:
-                        log_trace("[EINK REFRESH] physical refresh failure", e)
-
-            time.sleep(POLL_SECONDS)
-
-        except KeyboardInterrupt:
-            stop_lcd()
-            log("Device stopped.")
-            break
-
-        except Exception as e:
-            log_trace("[LOOP ERROR]", e)
+        while True:
             try:
+                now = time.time()
+
+                if now - last_heartbeat >= HEARTBEAT_SECONDS:
+                    send_heartbeat()
+                    last_heartbeat = now
+
+                data = poll_config()
+                timestamp = data.get("timestamp")
+                device = data.get("device") or {}
+                screens = device.get("screens") or DEVICE_SPEC["screens"]
+                log(
+                    "[CONFIG] received "
+                    f"timestamp={timestamp} "
+                    f"lcd_file={(data.get('lcd') or {}).get('file')} "
+                    f"lcd_content_id={(data.get('lcd') or {}).get('content_id')} "
+                    f"eink_file={(data.get('eink') or {}).get('file')} "
+                    f"eink_content_id={(data.get('eink') or {}).get('content_id')}"
+                )
+
+                lcd = data.get("lcd", {})
+                lcd_file = lcd.get("file")
+                lcd_url = lcd.get("url")
+                lcd_key = image_key(lcd, timestamp)
+
+                if lcd_file and lcd_url and lcd_key != lcd_current_key:
+                    log(f"[LCD] rendered_cms_url={absolute_url(lcd_url)} file={lcd_file}")
+                    path = download(lcd_url, LCD_RENDERED, "LCD")
+                    if path:
+                        show_lcd(path)
+                        lcd_current_key = lcd_key
+
+                eink = data.get("eink", {})
+                eink_file = eink.get("file")
+                eink_url = eink.get("url")
+                eink_key = image_key(eink, timestamp)
+                log(f"[EINK] rendered_cms_url={absolute_url(eink_url)} file={eink_file}")
+
+                if eink_file and eink_url and eink_key != eink_current_key:
+                    path = download(eink_url, EINK_RENDERED, "EINK")
+                    if path:
+                        try:
+                            show_eink(path, screens.get("eink"))
+                            eink_current_key = eink_key
+                        except Exception as e:
+                            log_trace("[EINK REFRESH] physical refresh failure", e)
+
                 time.sleep(POLL_SECONDS)
+
             except KeyboardInterrupt:
-                stop_lcd()
                 log("Device stopped.")
                 break
+
+            except Exception as e:
+                log_trace("[LOOP ERROR]", e)
+                try:
+                    time.sleep(POLL_SECONDS)
+                except KeyboardInterrupt:
+                    log("Device stopped.")
+                    break
+
+    finally:
+        stop_lcd()
+        lcd_relay.power_off()
 
 
 if __name__ == "__main__":
